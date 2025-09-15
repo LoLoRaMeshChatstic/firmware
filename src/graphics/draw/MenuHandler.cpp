@@ -18,25 +18,48 @@
 #include "modules/CannedMessageModule.h"
 #include "modules/KeyVerificationModule.h"
 
+#endif
 #include "modules/TraceRouteModule.h"
+#include "NotificationRenderer.h"
 #include <functional>
+#include "input/cardKbI2cImpl.h"
+
+#if HAS_WIFI && !defined(ARCH_PORTDUINO)
+#include <WiFi.h>
+#endif
+
+
+#include <algorithm>
+#include <vector>
+
+extern CannedMessageModule *cannedMessageModule;
+
+// Toggle global scroll for chat frames
+bool g_chatScrollByPress = false;
 
 extern uint16_t TFT_MESH;
 
 namespace graphics
 {
+// --- Scroll chat for short press (non-persistent) ---
+bool g_chatScrollByPress = false;
+
 menuHandler::screenMenus menuHandler::menuQueue = menu_none;
 bool test_enabled = false;
 uint8_t test_count = 0;
 
+// SSID password required for WiFi config menu
+static String s_wifiPendingSSID;
+
 void menuHandler::loraMenu()
 {
-    static const char *optionsArray[] = {"Back", "Region Picker", "Device Role"};
-    enum optionsNumbers { Back = 0, lora_picker = 1, device_role_picker = 2 };
+#if HAS_WIFI && !defined(ARCH_PORTDUINO)
+    static const char *optionsArray[] = {"Back", "Region Picker", "Device Role", "WiFi Config"};
+    enum optionsNumbers { Back = 0, lora_picker = 1, device_role_picker = 2, wifi_config = 3 };
     BannerOverlayOptions bannerOptions;
     bannerOptions.message = "LoRa Actions";
     bannerOptions.optionsArrayPtr = optionsArray;
-    bannerOptions.optionsCount = 3;
+    bannerOptions.optionsCount = 4;
     bannerOptions.bannerCallback = [](int selected) -> void {
         if (selected == Back) {
             // No action
@@ -45,7 +68,21 @@ void menuHandler::loraMenu()
         } else if (selected == device_role_picker) {
             menuHandler::menuQueue = menuHandler::device_role_picker;
         }
+#if HAS_WIFI && !defined(ARCH_PORTDUINO)
+        else if (selected == wifi_config) {
+            // Close this banner and launch the WiFi menu in the loop
+            NotificationRenderer::pauseBanner          = true;
+            NotificationRenderer::alertBannerUntil     = 1;
+            NotificationRenderer::optionsArrayPtr      = nullptr;
+            NotificationRenderer::optionsEnumPtr       = nullptr;
+            NotificationRenderer::alertBannerOptions   = 0;
+            menuHandler::menuQueue           = menuHandler::wifi_config_menu;
+            if (screen) screen->forceDisplay(true);
+            return;
+        }
+#endif
     };
+#endif
     screen->showOverlayBanner(bannerOptions);
 }
 
@@ -1104,6 +1141,127 @@ void menuHandler::wifiBaseMenu()
     screen->showOverlayBanner(bannerOptions);
 }
 
+void menuHandler::wifiConfigMenu()
+{
+#if HAS_WIFI && !defined(ARCH_PORTDUINO)
+    // close any keyboard that might be open
+    if (NotificationRenderer::virtualKeyboard) {
+        delete NotificationRenderer::virtualKeyboard;
+        NotificationRenderer::virtualKeyboard = nullptr;
+    }
+
+    // Wifi scan
+    WiFi.mode(WIFI_STA);
+    WiFi.disconnect(true);
+    delay(60);
+    int n = WiFi.scanNetworks(/*async=*/false, /*show_hidden=*/true);
+
+    struct AP { String ssid; int rssi; bool open; };
+    std::vector<AP> aps;
+    aps.reserve(n > 0 ? n : 0);
+
+    for (int i = 0; i < n; ++i) {
+        String ssid = WiFi.SSID(i);
+        if (ssid.length() == 0) continue;
+        int  rssi  = WiFi.RSSI(i);
+        bool open  = (WiFi.encryptionType(i) == WIFI_AUTH_OPEN);
+
+        auto it = std::find_if(aps.begin(), aps.end(), [&](const AP& a){ return a.ssid == ssid; });
+        if (it == aps.end()) aps.push_back({ssid, rssi, open});
+        else if (rssi > it->rssi) { it->rssi = rssi; it->open = open; }
+    }
+
+    std::sort(aps.begin(), aps.end(), [](const AP& a, const AP& b){ return a.rssi > b.rssi; });
+    const int MAX_SHOW = 12;
+    static char labels[MAX_SHOW + 3][40];
+    static const char* options[MAX_SHOW + 3];
+
+    int count = 0;
+    int apShown = (int)std::min(aps.size(), (size_t)MAX_SHOW);
+    for (int i = 0; i < apShown; ++i) {
+        const auto &ap = aps[i];
+        String ss = ap.ssid;
+        if (ss.length() > 22) ss = ss.substring(0, 19) + "...";
+        snprintf(labels[count], sizeof(labels[count]), "%s", ss.c_str());
+        options[count++] = labels[i];
+    }
+
+    if (apShown == 0) {
+        snprintf(labels[count], sizeof(labels[count]), "No networks");
+        options[count++] = labels[count];
+    }
+
+    int rescanIdx = count;
+    options[count++] = "Rescan";
+    int backIdx = count;
+    options[count++] = "Back";
+
+    static std::vector<AP> s_aps;
+    static int s_apShown, s_rescanIdx, s_backIdx;
+    s_aps       = aps;
+    s_apShown   = apShown;
+    s_rescanIdx = rescanIdx;
+    s_backIdx   = backIdx;
+
+    BannerOverlayOptions o;
+    o.message         = "WiFi Networks";
+    o.durationMs      = 0;
+    o.optionsArrayPtr = options;
+    o.optionsCount    = count;
+    o.optionsEnumPtr  = nullptr; // devolvemos ├¡ndice
+
+    o.bannerCallback = [](int sel) {
+        if (sel == s_rescanIdx) {
+            menuHandler::menuQueue = menuHandler::wifi_config_menu;
+            if (screen) screen->forceDisplay(true);
+            return;
+        }
+        if (sel == s_backIdx) {
+            if (screen) screen->setFrames(Screen::FOCUS_PRESERVE);
+            return;
+        }
+
+        if (s_apShown == 0) return;
+        if (sel < 0 || sel >= s_apShown) return;
+
+        const String ssidSel = s_aps[sel].ssid;
+        const bool   open    = s_aps[sel].open;
+
+        if (open) {
+            menuHandler::showConfirmationBanner("Open network. Connect?", [ssidSel]() {
+                config.network.wifi_enabled = true;
+                strlcpy(config.network.wifi_ssid, ssidSel.c_str(), sizeof(config.network.wifi_ssid));
+                config.network.wifi_psk[0] = '\0';
+                service->reloadConfig(SEGMENT_CONFIG);
+
+                WiFi.mode(WIFI_STA);
+                WiFi.disconnect(true);
+                delay(50);
+                WiFi.begin(ssidSel.c_str());
+                if (screen) screen->showSimpleBanner("Connecting...", 2000);
+            });
+            return;
+        }
+
+        // required password
+        NotificationRenderer::pauseBanner         = true;
+        NotificationRenderer::alertBannerUntil    = 1;
+        NotificationRenderer::optionsArrayPtr     = nullptr;
+        NotificationRenderer::optionsEnumPtr      = nullptr;
+        NotificationRenderer::alertBannerOptions  = 0;
+
+        s_wifiPendingSSID = ssidSel;
+        menuHandler::menuQueue = graphics::menuHandler::wifi_password_prompt;
+        if (screen) screen->forceDisplay(true);
+    };
+
+    screen->showOverlayBanner(o);
+#else
+    if (screen) screen->showSimpleBanner("WiFi not available", 2000);
+#endif
+}
+
+
 void menuHandler::wifiToggleMenu()
 {
     enum optionsNumbers { Back, Wifi_toggle };
@@ -1418,6 +1576,42 @@ void menuHandler::handleMenuSwitch(OLEDDisplay *display)
     case position_base_menu:
         positionBaseMenu();
         break;
+    case wifi_config_menu:
+        wifiConfigMenu();
+        menuQueue = menu_none;
+        return;
+    case node_info_menu:
+        // No-op
+    case wifi_password_prompt: {
+#if HAS_WIFI && !defined(ARCH_PORTDUINO)
+        char hdr[48];
+        snprintf(hdr, sizeof(hdr), "WiFi: %s", s_wifiPendingSSID.c_str());
+    // Activate CardKB if available
+        #if !defined(ARCH_PORTDUINO) && !MESHTASTIC_EXCLUDE_I2C
+        if (!::cardKbI2cImpl) {
+            ::cardKbI2cImpl = new CardKbI2cImpl();
+            ::cardKbI2cImpl->init();
+        }
+        #endif
+        screen->showTextInput(hdr, "", 0, [](const std::string &pass) {
+            // persistir config
+            config.network.wifi_enabled = true;
+            strlcpy(config.network.wifi_ssid, s_wifiPendingSSID.c_str(), sizeof(config.network.wifi_ssid));
+            strlcpy(config.network.wifi_psk,  pass.c_str(),             sizeof(config.network.wifi_psk));
+            service->reloadConfig(SEGMENT_CONFIG);
+
+            // aplicar ahora
+            WiFi.mode(WIFI_STA);
+            WiFi.disconnect(true);
+            delay(50);
+            WiFi.begin(s_wifiPendingSSID.c_str(), pass.c_str());
+            if (screen) screen->showSimpleBanner("Connecting...", 2000);
+        });
+#endif
+        menuQueue = menu_none;
+        return;
+    }
+ #if !MESHTASTIC_EXCL
 #if !MESHTASTIC_EXCLUDE_GPS
     case gps_toggle_menu:
         GPSToggleMenu();

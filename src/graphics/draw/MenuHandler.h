@@ -33,6 +33,8 @@ class menuHandler
         test_menu,
         number_test,
         wifi_toggle_menu,
+        wifi_config_menu,
+        wifi_password_prompt,
         bluetooth_toggle_menu,
         notifications_menu,
         screen_options_menu,
@@ -41,6 +43,7 @@ class menuHandler
         key_verification_init,
         key_verification_final_prompt,
         trace_route_menu,
+        node_info_menu,
         throttle_message,
         FrameToggles
     };
@@ -80,6 +83,7 @@ class menuHandler
     static void numberTest();
     static void wifiBaseMenu();
     static void wifiToggleMenu();
+    static void wifiConfigMenu();
     static void notificationsMenu();
     static void screenOptionsMenu();
     static void powerMenu();

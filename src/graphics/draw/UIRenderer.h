@@ -32,6 +32,8 @@ class Screen;
 class UIRenderer
 {
   public:
+    //screen node info direct draw (no overlay, no focus handling)
+    static void drawNodeInfoDirect(OLEDDisplay *display, const OLEDDisplayUiState *state, int16_t x, int16_t y);
     // Common UI elements
     static void drawNodes(OLEDDisplay *display, int16_t x, int16_t y, const meshtastic::NodeStatus *nodeStatus,
                           int node_offset = 0, bool show_total = true, String additional_words = "");

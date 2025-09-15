@@ -20,6 +20,7 @@
 #include "mesh/generated/meshtastic/cannedmessages.pb.h"
 #include "modules/AdminModule.h"
 #include "modules/ExternalNotificationModule.h" // for buzzer control
+#include "modules/ChatHistoryStore.h" // for chat history
 #if HAS_TRACKBALL
 #include "input/TrackballInterruptImpl1.h"
 #endif
@@ -37,7 +38,16 @@
 #include "graphics/ScreenFonts.h"
 #include <Throttle.h>
 
+
+#include <time.h>
+#include <string>
+#include <functional>
+
 // Remove Canned message screen if no action is taken for some milliseconds
+
+
+std::string g_pendingKeyboardHeader; // Global variable to hold pending keyboard header text
+extern bool kb_found; // from InputBroker.cpp
 #define INACTIVATE_AFTER_MS 20000
 
 extern ScanI2C::DeviceAddress cardkb_found;
@@ -48,6 +58,36 @@ static const char *cannedMessagesConfigFile = "/prefs/cannedConf.proto";
 static NodeNum lastDest = NODENUM_BROADCAST;
 static uint8_t lastChannel = 0;
 static bool lastDestSet = false;
+
+// Helper to generate "Xm" label for a timestamp in seconds
+
+static String minutesAgoLabel(uint32_t tsSec)
+{
+    uint32_t nowSec = millis() / 1000;
+    uint32_t diff   = (nowSec > tsSec) ? (nowSec - tsSec) : 0;
+    uint32_t mins   = diff / 60;
+    if (mins == 0) mins = 1;
+    char buf[8];
+    snprintf(buf, sizeof(buf), "%lum", (unsigned long)mins);
+    return String(buf);
+}
+
+static String currentChatAgeLabel(NodeNum dest, uint8_t ch)
+{
+    uint32_t ts = 0;
+    bool ok = false;
+
+    if (dest == NODENUM_BROADCAST) {
+        const auto& v = chat::ChatHistoryStore::instance().getCHAN(ch);
+        if (!v.empty()) { ts = v.back().ts; ok = true; }
+    } else {
+        const auto& v = chat::ChatHistoryStore::instance().getDM(dest);
+        if (!v.empty()) { ts = v.back().ts; ok = true; }
+    }
+
+    return ok ? minutesAgoLabel(ts) : String("");
+}
+
 
 meshtastic_CannedMessageModuleConfig cannedMessageModuleConfig;
 
@@ -71,11 +111,7 @@ CannedMessageModule::CannedMessageModule()
 
 void CannedMessageModule::LaunchWithDestination(NodeNum newDest, uint8_t newChannel)
 {
-    // Use the requested destination, unless it's "broadcast" and we have a previous node/channel
-    if (newDest == NODENUM_BROADCAST && lastDestSet) {
-        newDest = lastDest;
-        newChannel = lastChannel;
-    }
+    // Set destination/channel for canned messages
     dest = newDest;
     channel = newChannel;
     lastDest = dest;
@@ -112,11 +148,7 @@ void CannedMessageModule::LaunchRepeatDestination()
 
 void CannedMessageModule::LaunchFreetextWithDestination(NodeNum newDest, uint8_t newChannel)
 {
-    // Use the requested destination, unless it's "broadcast" and we have a previous node/channel
-    if (newDest == NODENUM_BROADCAST && lastDestSet) {
-        newDest = lastDest;
-        newChannel = lastChannel;
-    }
+    // Set destination/channel for freetext
     dest = newDest;
     channel = newChannel;
     lastDest = dest;
@@ -129,6 +161,33 @@ void CannedMessageModule::LaunchFreetextWithDestination(NodeNum newDest, uint8_t
     e.action = UIFrameEvent::Action::REGENERATE_FRAMESET;
     notifyObservers(&e);
 }
+
+// Launch a freetext input overlay with specified header and initial text.
+void CannedMessageModule::LaunchFreetextPrompt(const char* header,
+                                               const std::string& /*initial*/,
+                                               std::function<void(const std::string&)> onSubmit)
+{
+    // Store header text in global variable for use in NotificationRenderer
+    g_pendingKeyboardHeader = header ? header : "Input";
+
+    // Set up NotificationRenderer for text input with callback
+    // First reset any existing banner/input state
+    graphics::NotificationRenderer::resetBanner();
+    graphics::NotificationRenderer::textInputCallback    = onSubmit;
+    strlcpy(graphics::NotificationRenderer::alertBannerMessage,
+            header ? header : "Enter text",
+            sizeof(graphics::NotificationRenderer::alertBannerMessage));
+    graphics::NotificationRenderer::curSelected               = 0;
+    graphics::NotificationRenderer::alertBannerUntil          = 0;
+    graphics::NotificationRenderer::current_notification_type = graphics::notificationTypeEnum::text_input;
+
+    if (!graphics::NotificationRenderer::virtualKeyboard) {
+        graphics::NotificationRenderer::virtualKeyboard = new graphics::VirtualKeyboard();
+    }
+
+    if (screen) screen->setFrames(graphics::Screen::FOCUS_PRESERVE);
+}
+
 
 static bool returnToCannedList = false;
 bool hasKeyForNode(const meshtastic_NodeInfoLite *node)
@@ -195,13 +254,13 @@ void CannedMessageModule::drawHeader(OLEDDisplay *display, int16_t x, int16_t y,
 {
     if (graphics::isHighResolution) {
         if (this->dest == NODENUM_BROADCAST) {
-            display->drawStringf(x, y, buffer, "To: Broadcast@%s", channels.getName(this->channel));
+            display->drawStringf(x, y, buffer, "To: @%s", channels.getName(this->channel));
         } else {
             display->drawStringf(x, y, buffer, "To: %s", getNodeName(this->dest));
         }
     } else {
         if (this->dest == NODENUM_BROADCAST) {
-            display->drawStringf(x, y, buffer, "To: Broadc@%.5s", channels.getName(this->channel));
+            display->drawStringf(x, y, buffer, "To: @%.9s", channels.getName(this->channel));
         } else {
             display->drawStringf(x, y, buffer, "To: %s", getNodeName(this->dest));
         }
@@ -363,16 +422,6 @@ int CannedMessageModule::handleInputEvent(const InputEvent *event)
         if (isSelect) {
             return 0; // Main button press no longer runs through powerFSM
         }
-        // Let LEFT/RIGHT pass through so frame navigation works
-        if (event->inputEvent == INPUT_BROKER_LEFT || event->inputEvent == INPUT_BROKER_RIGHT) {
-            break;
-        }
-        // Handle UP/DOWN: activate canned message list!
-        if (event->inputEvent == INPUT_BROKER_UP || event->inputEvent == INPUT_BROKER_DOWN ||
-            event->inputEvent == INPUT_BROKER_ALT_LONG) {
-            LaunchWithDestination(NODENUM_BROADCAST);
-            return 1;
-        }
         // Printable char (ASCII) opens free text compose
         if (event->kbchar >= 32 && event->kbchar <= 126) {
             runState = CANNED_MESSAGE_RUN_STATE_FREETEXT;
@@ -401,6 +450,10 @@ int CannedMessageModule::handleInputEvent(const InputEvent *event)
 
 bool CannedMessageModule::isUpEvent(const InputEvent *event)
 {
+        // Up arrow always allowed if not inactive
+    if (runState == CANNED_MESSAGE_RUN_STATE_INACTIVE)
+        return false;
+
     return event->inputEvent == INPUT_BROKER_UP ||
            ((runState == CANNED_MESSAGE_RUN_STATE_ACTIVE || runState == CANNED_MESSAGE_RUN_STATE_EMOTE_PICKER ||
              runState == CANNED_MESSAGE_RUN_STATE_DESTINATION_SELECTION) &&
@@ -408,6 +461,9 @@ bool CannedMessageModule::isUpEvent(const InputEvent *event)
 }
 bool CannedMessageModule::isDownEvent(const InputEvent *event)
 {
+    // Down arrow always allowed if not inactive
+    if (runState == CANNED_MESSAGE_RUN_STATE_INACTIVE)
+        return false;
     return event->inputEvent == INPUT_BROKER_DOWN ||
            ((runState == CANNED_MESSAGE_RUN_STATE_ACTIVE || runState == CANNED_MESSAGE_RUN_STATE_EMOTE_PICKER ||
              runState == CANNED_MESSAGE_RUN_STATE_DESTINATION_SELECTION) &&
@@ -642,7 +698,7 @@ bool CannedMessageModule::handleMessageSelectorInput(const InputEvent *event, bo
             if (osk_found && screen) {
                 char headerBuffer[64];
                 if (this->dest == NODENUM_BROADCAST) {
-                    snprintf(headerBuffer, sizeof(headerBuffer), "To: Broadcast@%s", channels.getName(this->channel));
+                    snprintf(headerBuffer, sizeof(headerBuffer), "To: @%s", channels.getName(this->channel));
                 } else {
                     snprintf(headerBuffer, sizeof(headerBuffer), "To: %s", getNodeName(this->dest));
                 }
@@ -971,6 +1027,29 @@ void CannedMessageModule::sendText(NodeNum dest, ChannelIndex channel, const cha
 
     // Log outgoing message
     LOG_INFO("Send message id=%u, dest=%x, msg=%.*s", p->id, p->to, p->decoded.payload.size, p->decoded.payload.bytes);
+
+    // Save to chat history
+    uint32_t nowTs = (uint32_t)time(nullptr);
+    if (nowTs == 0) {
+        nowTs = millis() / 1000;
+    }
+
+    std::string msgCopy(message);
+    if (dest == NODENUM_BROADCAST) {
+        chat::ChatHistoryStore::instance().addCHAN(
+            channel,
+            nodeDB ? nodeDB->getNodeNum() : 0,
+            true,
+            msgCopy,
+            nowTs);
+    } else {
+        chat::ChatHistoryStore::instance().addDM(
+            dest,
+            true,
+            msgCopy,
+            nowTs);
+    }
+
 
     if (p->to != 0xffffffff) {
         LOG_INFO("Proactively adding %x as favorite node", p->to);

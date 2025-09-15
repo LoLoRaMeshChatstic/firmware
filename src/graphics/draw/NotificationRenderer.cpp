@@ -664,6 +664,28 @@ void NotificationRenderer::drawTextInput(OLEDDisplay *display, OLEDDisplayUiStat
                 virtualKeyboard->moveCursorLeft();
             } else if (inEvent.inputEvent == INPUT_BROKER_USER_PRESS) {
                 virtualKeyboard->moveCursorRight();
+            } else if (inEvent.inputEvent == INPUT_BROKER_ANYKEY) {
+                // CardKB: manejar teclas especiales y caracteres imprimibles
+                if (inEvent.kbchar == 8) { // Backspace
+                    virtualKeyboard->deleteCharacter();
+                } else if (inEvent.kbchar == 10) { // Enter
+                    virtualKeyboard->submitText();
+                } else if (inEvent.kbchar == 27) { // Esc
+                    auto callback = textInputCallback;
+                    delete virtualKeyboard;
+                    virtualKeyboard = nullptr;
+                    textInputCallback = nullptr;
+                    resetBanner();
+                    if (callback) {
+                        callback("");
+                    }
+                    if (screen) {
+                        screen->setFrames(graphics::Screen::FOCUS_PRESERVE);
+                    }
+                    return;
+                } else if (inEvent.kbchar >= 32 && inEvent.kbchar <= 126) {
+                    virtualKeyboard->insertCharacter(inEvent.kbchar);
+                }
             } else if (inEvent.inputEvent == INPUT_BROKER_SELECT) {
                 virtualKeyboard->handlePress();
             } else if (inEvent.inputEvent == INPUT_BROKER_SELECT_LONG) {

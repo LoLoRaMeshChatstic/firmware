@@ -221,6 +221,7 @@ class Screen : public concurrency::OSThread
     explicit Screen(ScanI2C::DeviceAddress, meshtastic_Config_DisplayConfig_OledType, OLEDDISPLAY_GEOMETRY);
     size_t frameCount = 0; // Total number of active frames
     ~Screen();
+    void openNodeInfoFor(NodeNum nodeNum);// Opens direct the node info screen for a specific node
 
     // Which frame we want to be displayed, after we regen the frameset by calling setFrames
     enum FrameFocus : uint8_t {
@@ -315,6 +316,28 @@ class Screen : public concurrency::OSThread
     void showNumberPicker(const char *message, uint32_t durationMs, uint8_t digits, std::function<void(uint32_t)> bannerCallback);
     void showTextInput(const char *header, const char *initialText, uint32_t durationMs,
                        std::function<void(const std::string &)> textCallback);
+    // to jump to a specific frame
+    void jumpToFrame(uint8_t frame) {
+        if (ui) ui->switchToFrame(frame);
+    }
+
+    // wrapper to show a single frame quickly
+    void showSingleFrame(FrameCallback cb) {
+        FrameCallback tmp[1] = { cb };
+        ui->setFrames(tmp, 1);
+        setFastFramerate();
+        forceDisplay(true);
+    }
+
+
+    void showCustomFrame(FrameCallback *frames, uint8_t count, FrameFocus focus = FOCUS_DEFAULT) {
+        ui->disableAllIndicators();
+        ui->setFrames(frames, count);
+        setFastFramerate();
+        forceDisplay(true);
+    }
+
+
 
     void requestMenu(graphics::menuHandler::screenMenus menuToShow)
     {
