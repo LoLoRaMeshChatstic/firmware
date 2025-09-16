@@ -1,13 +1,56 @@
 #include "modules/ChatHistoryStore.h"
 #include <algorithm>
+#include "FSCommon.h"
+#include <sstream>
 
 namespace chat {
 
+
 static const std::deque<ChatEntry> kEmptyDeque;
+
+// --- Serialización CSV simple ---
+std::string ChatEntry::serialize(const ChatEntry& e) {
+  char buf[32];
+  snprintf(buf, sizeof(buf), "%u,%d,%d,%u,%u,", e.ts, e.outgoing, e.isChannel, e.node, e.channel);
+  std::string s(buf);
+  // Escapar comas en el texto si es necesario (simple)
+  for (char c : e.text) {
+    if (c == ',') s += "<c>";
+    else s += c;
+  }
+  return s;
+}
+
+ChatEntry ChatEntry::deserialize(const std::string& line) {
+  ChatEntry e;
+  std::stringstream ss(line);
+  std::string item;
+  std::getline(ss, item, ','); e.ts = std::stoul(item);
+  std::getline(ss, item, ','); e.outgoing = std::stoi(item);
+  std::getline(ss, item, ','); e.isChannel = std::stoi(item);
+  std::getline(ss, item, ','); e.node = std::stoul(item);
+  std::getline(ss, item, ','); e.channel = std::stoul(item);
+  std::getline(ss, item); // resto es texto
+  // Desescapar comas
+  size_t pos = 0, last = 0;
+  std::string txt;
+  while ((pos = item.find("<c>", last)) != std::string::npos) {
+    txt += item.substr(last, pos - last) + ',';
+    last = pos + 3;
+  }
+  txt += item.substr(last);
+  e.text = txt;
+  return e;
+}
+
 
 ChatHistoryStore& ChatHistoryStore::instance() {
   static ChatHistoryStore inst;
   return inst;
+}
+
+ChatHistoryStore::ChatHistoryStore() {
+  loadAll();
 }
 
 void ChatHistoryStore::pushBounded(std::deque<ChatEntry>& q, ChatEntry e) {
@@ -31,6 +74,7 @@ void ChatHistoryStore::addDM(uint32_t peer, bool outgoing, const std::string& te
   e.channel  = 0;
   e.text     = text;
   pushBounded(dm_[peer], std::move(e));
+  saveDM(peer);
 }
 
 void ChatHistoryStore::addCHAN(uint8_t channel, uint32_t fromNode, bool outgoing, const std::string& text, uint32_t ts) {
@@ -42,6 +86,65 @@ void ChatHistoryStore::addCHAN(uint8_t channel, uint32_t fromNode, bool outgoing
   e.channel  = channel;
   e.text     = text;
   pushBounded(ch_[channel], std::move(e));
+  saveCHAN(channel);
+}
+// --- Persistencia ---
+void ChatHistoryStore::saveDM(uint32_t peer) {
+  std::string filename = "/chat_dm_" + std::to_string(peer) + ".txt";
+  auto f = FSCom.open(filename.c_str(), FILE_O_WRITE);
+  if (!f) return;
+  for (const auto& e : dm_[peer]) {
+    f.println(ChatEntry::serialize(e).c_str());
+  }
+  f.close();
+}
+
+void ChatHistoryStore::loadDM(uint32_t peer) {
+  std::string filename = "/chat_dm_" + std::to_string(peer) + ".txt";
+  auto f = FSCom.open(filename.c_str(), FILE_O_READ);
+  if (!f) return;
+  std::deque<ChatEntry> q;
+  while (f.available()) {
+    std::string line = f.readStringUntil('\n').c_str();
+    if (!line.empty()) q.push_back(ChatEntry::deserialize(line));
+  }
+  dm_[peer] = q;
+  f.close();
+}
+
+void ChatHistoryStore::saveCHAN(uint8_t channel) {
+  std::string filename = "/chat_ch_" + std::to_string(channel) + ".txt";
+  auto f = FSCom.open(filename.c_str(), FILE_O_WRITE);
+  if (!f) return;
+  for (const auto& e : ch_[channel]) {
+    f.println(ChatEntry::serialize(e).c_str());
+  }
+  f.close();
+}
+
+void ChatHistoryStore::loadCHAN(uint8_t channel) {
+  std::string filename = "/chat_ch_" + std::to_string(channel) + ".txt";
+  auto f = FSCom.open(filename.c_str(), FILE_O_READ);
+  if (!f) return;
+  std::deque<ChatEntry> q;
+  while (f.available()) {
+    std::string line = f.readStringUntil('\n').c_str();
+    if (!line.empty()) q.push_back(ChatEntry::deserialize(line));
+  }
+  ch_[channel] = q;
+  f.close();
+}
+
+void ChatHistoryStore::saveAll() {
+  for (const auto& kv : dm_) saveDM(kv.first);
+  for (const auto& kv : ch_) saveCHAN(kv.first);
+}
+
+void ChatHistoryStore::loadAll() {
+  // Cargar todos los archivos de historial existentes
+  // (simple: probar los peers y canales más comunes)
+  for (uint32_t peer = 1; peer < 100; ++peer) loadDM(peer);
+  for (uint8_t ch = 0; ch < 16; ++ch) loadCHAN(ch);
 }
 
 const std::deque<ChatEntry>& ChatHistoryStore::getDM(uint32_t peer) const {

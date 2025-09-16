@@ -19,6 +19,10 @@ struct ChatEntry {
   uint32_t node{0};         // DM: peer; Canal: nodeId del remitente (0 si no disponible)
   uint8_t  channel{0};      // válido si isChannel==true
   std::string text;         // UTF-8 renderizable en OLED
+
+  // Serialización simple CSV
+  static std::string serialize(const ChatEntry& e);
+  static ChatEntry deserialize(const std::string& line);
 };
 
 class ChatHistoryStore {
@@ -47,8 +51,15 @@ public:
   static constexpr size_t kMaxPerGroup = 15;
 
 private:
-  ChatHistoryStore() = default;
+  ChatHistoryStore();
   static void pushBounded(std::deque<ChatEntry>& q, ChatEntry e);
+
+  void saveDM(uint32_t peer);
+  void loadDM(uint32_t peer);
+  void saveCHAN(uint8_t channel);
+  void loadCHAN(uint8_t channel);
+  void saveAll();
+  void loadAll();
 
   std::map<uint32_t, std::deque<ChatEntry>> dm_;
   std::map<uint8_t , std::deque<ChatEntry>> ch_;
