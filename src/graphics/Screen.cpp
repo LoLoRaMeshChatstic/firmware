@@ -247,6 +247,7 @@ static bool g_chatScrollActive = false; // true if any frame drew marquee this c
 
 struct ScrollState {
     int sel = 0;            // selected line (0..visible-1)
+    int scrollIndex = 0;    // first visible message (sliding window)
     int offset = 0;         // horizontal offset (characters)
     uint32_t lastMs = 0;    // last update
 };
@@ -524,29 +525,30 @@ static void drawFavNodeChatFrame(OLEDDisplay *display, OLEDDisplayUiState *state
 
     display->setFont(FONT_SMALL);
 
-    const int visible = std::min((int)q.size(), maxLines);
-    if (visible <= 0) {
+    const int total = (int)q.size();
+    const int visibleRows = std::min(total, maxLines);
+    if (visibleRows <= 0) {
         drawLineSmall(display, x, top, "Waiting...");
         return;
     }
 
+    // Clamp scrollIndex
+    if (st.scrollIndex > total - visibleRows) st.scrollIndex = total - visibleRows;
+    if (st.scrollIndex < 0) st.scrollIndex = 0;
+    // Clamp sel
     if (st.sel < 0) st.sel = 0;
-    if (st.sel >= visible) st.sel = visible - 1;
+    if (st.sel >= visibleRows) st.sel = visibleRows - 1;
 
-    for (int l = 0; l < visible; ++l) {
-        int i = (int)q.size() - 1 - l;
-        const auto &e = q[i];
-
-    // Fixed label
+    for (int row = 0; row < visibleRows; ++row) {
+        int itemIndex = total - 1 - (st.scrollIndex + row);
+        if (itemIndex < 0) break;
+        const auto &e = q[itemIndex];
         std::string who = e.outgoing ? "S" : "R";
-
-    // Full text
         std::string base = who + ": " + e.text;
         std::string view;
         bool needScroll = false;
         const int cap = 22;
-
-        if (l == st.sel) {
+        if (row == st.sel) {
             view = marqueeSlice(base, st, cap, /*advance*/ true);
             needScroll = ((int)base.size() > cap);
         } else {
@@ -554,9 +556,8 @@ static void drawFavNodeChatFrame(OLEDDisplay *display, OLEDDisplayUiState *state
             else view = base;
         }
         if (needScroll) g_chatScrollActive = true;
-
-        int lineY = top + l * lineH;
-        if (l == st.sel) {
+        int lineY = top + row * lineH;
+        if (row == st.sel) {
             display->fillRect(x, lineY, display->getWidth(), lineH);
             display->setColor(BLACK);
             drawLineSmall(display, x, lineY, view.c_str());
@@ -608,19 +609,24 @@ static void drawChannelChatTabFrame(OLEDDisplay *display, OLEDDisplayUiState *st
 
     display->setFont(FONT_SMALL);
 
-    const int visible = std::min((int)q.size(), maxLines);
-    if (visible <= 0) {
+    const int total = (int)q.size();
+    const int visibleRows = std::min(total, maxLines);
+    if (visibleRows <= 0) {
         drawLineSmall(display, x, top, "Waiting...");
         return;
     }
 
+    // Clamp scrollIndex
+    if (st.scrollIndex > total - visibleRows) st.scrollIndex = total - visibleRows;
+    if (st.scrollIndex < 0) st.scrollIndex = 0;
+    // Clamp sel
     if (st.sel < 0) st.sel = 0;
-    if (st.sel >= visible) st.sel = visible - 1;
+    if (st.sel >= visibleRows) st.sel = visibleRows - 1;
 
-    for (int l = 0; l < visible; ++l) {
-        int i = (int)q.size() - 1 - l;
-        const auto &e = q[i];
-
+    for (int row = 0; row < visibleRows; ++row) {
+        int itemIndex = total - 1 - (st.scrollIndex + row);
+        if (itemIndex < 0) break;
+        const auto &e = q[itemIndex];
         std::string who;
         if (e.outgoing) who = "Send";
         else {
@@ -629,13 +635,11 @@ static void drawChannelChatTabFrame(OLEDDisplay *display, OLEDDisplayUiState *st
             else if (e.node) { char buf[9]; std::snprintf(buf, sizeof(buf), "%08X", (unsigned)e.node); who = buf; }
             else who = "??";
         }
-
         std::string base = who + ": " + e.text;
         std::string view;
         bool needScroll = false;
         const int cap = 28;
-
-        if (l == st.sel) {
+        if (row == st.sel) {
             view = marqueeSlice(base, st, cap, /*advance*/ true);
             needScroll = ((int)base.size() > cap);
         } else {
@@ -643,9 +647,8 @@ static void drawChannelChatTabFrame(OLEDDisplay *display, OLEDDisplayUiState *st
             else view = base;
         }
         if (needScroll) g_chatScrollActive = true;
-
-        int lineY = top + l * lineH;
-        if (l == st.sel) {
+        int lineY = top + row * lineH;
+        if (row == st.sel) {
             display->fillRect(x, lineY, display->getWidth(), lineH);
             display->setColor(BLACK);
             drawLineSmall(display, x, lineY, view.c_str());
@@ -2242,11 +2245,32 @@ int Screen::handleInputEvent(const InputEvent *event)
                 const int h = dispdev->getHeight();
                 const int lineH = 10;
                 const int maxLines = ((h - 16) / lineH > 4) ? ((h - 16) / lineH) : 4;
-                const int visible = std::min((int)q.size(), maxLines);
-                if (visible <= 0) return;
+                const int total = (int)q.size();
+                const int visibleRows = std::min(total, maxLines);
+                if (visibleRows <= 0) return;
                 ScrollState &st = g_nodeScroll[nodeId];
-                if (dir < 0) st.sel = (st.sel <= 0) ? (visible - 1) : (st.sel - 1);
-                else         st.sel = (st.sel + 1) % visible;
+                // Sliding window navigation
+                if (dir > 0) {
+                    if (st.sel < visibleRows - 1) {
+                        st.sel++;
+                    } else if (st.scrollIndex < total - visibleRows) {
+                        st.scrollIndex++;
+                    } else {
+                        // wrap to top
+                        st.sel = 0;
+                        st.scrollIndex = 0;
+                    }
+                } else if (dir < 0) {
+                    if (st.sel > 0) {
+                        st.sel--;
+                    } else if (st.scrollIndex > 0) {
+                        st.scrollIndex--;
+                    } else {
+                        // wrap to bottom
+                        st.scrollIndex = total - visibleRows;
+                        st.sel = visibleRows - 1;
+                    }
+                }
                 st.offset = 0; st.lastMs = millis();
                 setFastFramerate(); forceDisplay();
             };
@@ -2255,11 +2279,32 @@ int Screen::handleInputEvent(const InputEvent *event)
                 const int h = dispdev->getHeight();
                 const int lineH = 10;
                 const int maxLines = ((h - 16) / lineH > 4) ? ((h - 16) / lineH) : 4;
-                const int visible = std::min((int)q.size(), maxLines);
-                if (visible <= 0) return;
+                const int total = (int)q.size();
+                const int visibleRows = std::min(total, maxLines);
+                if (visibleRows <= 0) return;
                 ScrollState &st = g_chanScroll[ch];
-                if (dir < 0) st.sel = (st.sel <= 0) ? (visible - 1) : (st.sel - 1);
-                else         st.sel = (st.sel + 1) % visible;
+                // Sliding window navigation
+                if (dir > 0) {
+                    if (st.sel < visibleRows - 1) {
+                        st.sel++;
+                    } else if (st.scrollIndex < total - visibleRows) {
+                        st.scrollIndex++;
+                    } else {
+                        // wrap to top
+                        st.sel = 0;
+                        st.scrollIndex = 0;
+                    }
+                } else if (dir < 0) {
+                    if (st.sel > 0) {
+                        st.sel--;
+                    } else if (st.scrollIndex > 0) {
+                        st.scrollIndex--;
+                    } else {
+                        // wrap to bottom
+                        st.scrollIndex = total - visibleRows;
+                        st.sel = visibleRows - 1;
+                    }
+                }
                 st.offset = 0; st.lastMs = millis();
                 setFastFramerate(); forceDisplay();
             };

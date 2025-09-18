@@ -37,7 +37,11 @@ ProcessMessage TextMessageModule::handleReceived(const meshtastic_MeshPacket &mp
     }
 
     // Timestamp and channel
-    const uint32_t ts = mp.rx_time;
+    uint32_t ts = mp.rx_time;
+    if (ts == 0) {
+        ts = (uint32_t)time(nullptr);
+        if (ts == 0) ts = millis() / 1000;
+    }
     const uint8_t channelIndex = static_cast<uint8_t>(mp.channel);
 
     // DM if 'to' is NOT broadcast
