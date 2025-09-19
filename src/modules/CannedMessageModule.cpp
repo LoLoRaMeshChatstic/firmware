@@ -215,14 +215,8 @@ int CannedMessageModule::splitConfiguredMessages()
     int tempCount = 0;
     // Insert at position 0 (top)
     tempMessages[tempCount++] = "[Select Destination]";
-#if defined(USE_VIRTUAL_KEYBOARD)
-    // Add a "Free Text" entry at the top if using a touch screen virtual keyboard
+    // Siempre añadir la opción Free Text
     tempMessages[tempCount++] = "[-- Free Text --]";
-#else
-    if (osk_found && screen) {
-        tempMessages[tempCount++] = "[-- Free Text --]";
-    }
-#endif
 
     // First message always starts at buffer start
     tempMessages[tempCount++] = this->messageStore;
