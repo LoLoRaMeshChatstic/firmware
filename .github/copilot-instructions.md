@@ -1,60 +1,129 @@
 # Copilot Instructions for Meshtastic Firmware
 
-## Arquitectura general
+## Architecture Overview
 
-- Firmware multiplataforma para dispositivos LoRa (ESP32, nRF52, RP2040, Linux).
-- Estructura modular: cada plataforma tiene su propio subdirectorio bajo `arch/`.
-- El núcleo de la lógica de red, mensajes y configuración está en `src/`.
-- Scripts de construcción y utilidades en `bin/` y `extra_scripts/`.
-- Configuración de compilación y targets en `platformio.ini`.
+**Multi-platform LoRa mesh firmware** supporting ESP32, nRF52, RP2040/RP2350, STM32, and Linux devices.
 
-## Flujos de trabajo de desarrollo
+### Key Components
 
-- **Compilación:** Usa PlatformIO (`PlatformIO: Build` en VS Code o `pio run`).
-- **Flasheo:** Sigue la [guía oficial](https://meshtastic.org/docs/getting-started/flashing-firmware/) o ejecuta los scripts en `bin/` (`device-install.bat`, `.sh`, `.ps1`).
-- **Pruebas:** Los tests están en `test/` y pueden requerir hardware específico.
-- **Actualización de protos:** Usa `bin/regen-protos.sh` o `.bat` para regenerar archivos protobuf.
+- **`src/`** - Core firmware logic: mesh networking, modules, graphics, hardware abstraction
+- **`arch/`** - Platform-specific implementations (ESP32, nRF52, etc.) with dedicated `.ini` configs
+- **`variants/`** - Device-specific configurations (GPIO pins, displays, sensors)
+- **`src/mesh/generated/meshtastic/`** - Auto-generated protobuf message definitions
+- **`src/modules/`** - Feature modules extending base `MeshModule` class
+- **`src/graphics/`** - Display system with Screen framework and UI components
 
-## Convenciones y patrones
+## Critical Development Workflows
 
-- **Soporte multiplataforma:** Cada arquitectura tiene scripts y configuraciones dedicadas.
-- **Tablas de partición:** Archivos CSV en la raíz para diferentes tamaños de memoria.
-- **Versionado:** Usa `version.properties` y scripts en `bin/` para gestión de versiones.
-- **Configuración de usuario:** `userPrefs.jsonc` y scripts asociados para generación y validación.
-- **Integración continua:** Workflows GitHub Actions definidos en `.github/workflows/` (ver repositorio principal si no existen localmente).
+### Build System
 
-## Dependencias y puntos de integración
+- **Target-specific builds:** `pio run -e heltec-v3` (replace with your target from `platformio.ini`)
+- **Multi-config system:** `platformio.ini` includes `arch/*/*.ini` and `variants/*/*/platformio.ini`
+- **Build flags:** Extensive RadioLib exclusions and platform optimizations in `[env]`
 
-- **PlatformIO:** Principal sistema de build y gestión de dependencias.
-- **Protobuf:** Usado para la definición de mensajes de red.
-- **Scripts auxiliares:** Bash, Python y PowerShell para automatización.
-- **Soporte Docker:** Archivos `Dockerfile` y `docker-compose.yml` para entornos reproducibles.
+### Hardware Detection & Configuration
 
-## Ejemplos de comandos útiles
+- **I2C scanning:** `detect/ScanI2C.h` - auto-detects displays, keyboards, sensors
+- **Conditional compilation:** Heavy use of `#if HAS_SCREEN`, `#if !MESHTASTIC_EXCLUDE_*`
+- **Hardware variants:** Each device in `variants/` has specific GPIO, display, and radio configs
 
-- Compilar firmware: `pio run`
-- Flashear dispositivo: `bin/device-install.bat` (Windows) o `bin/device-install.sh` (Linux/Mac)
-- Regenerar protos: `bin/regen-protos.sh`
-- Bump de versión: `bin/bump_version.py`
+### Module Development Pattern
 
-## Archivos/directorios clave
+```cpp
+// Extend MeshModule for new features
+class YourModule : public ProtobufModule<meshtastic_YourProto>
+{
+    virtual ProcessMessage handleReceived(const meshtastic_MeshPacket &mp) override;
+    virtual bool handleReceivedProtobuf(const meshtastic_MeshPacket &mp, meshtastic_YourProto *proto) override;
+    // Register in src/modules/Modules.cpp
+};
+```
 
-- `arch/` – Código específico por plataforma
-- `src/` – Lógica principal del firmware
-- `bin/` – Scripts de utilidad y automatización
-- `platformio.ini` – Configuración de PlatformIO
-- `test/` – Pruebas automatizadas
-- `userPrefs.jsonc` – Configuración de usuario
+## UI & Graphics Architecture
 
-## Notas adicionales
+### Screen Framework
 
-- Consulta la [documentación oficial](https://meshtastic.org/docs/) para detalles avanzados.
-- Sigue los scripts y convenciones existentes para asegurar compatibilidad multiplataforma.
-- Participa en la comunidad para soporte y contribuciones.
-- Los comentario en el codigo están en inglés, mantén la coherencia.
-- Estamos trabajando en el menu wifi y en el historial de mensajes en pantalla con los chats de node/channel.
-- El proyecto está en constante evolución, revisa los cambios recientes en el repositorio para estar al día.
-- Si tienes dudas sobre la estructura o el flujo de trabajo, revisa issues y pull requests previos en GitHub para contexto adicional.
-- El proyecto esta orientado a pull requests
-- No borramos para insertar el codigo nuevo, no movemos el codigo, solo insertamos.
-- Traduccion de los comentarios que hay en castellano al ingles.
+- **Frame-based UI:** `graphics::Screen` manages multiple display frames (message, node info, settings)
+- **Focus management:** Modules call `requestFocus()` to show their UI, `screen->setFrames(FOCUS_PRESERVE)` to release
+- **Input handling:** Unified InputBroker supports physical buttons, CardKB, rotary encoders
+- **Custom callbacks:** For non-message scenarios (WiFi config), use custom callback pattern like `LaunchFreetextKbPrompt()`
+
+### Display Support
+
+- **Multi-display:** OLED (SSD1306, SH1106), E-Ink, TFT with auto-detection
+- **Conditional UI:** `#if HAS_SCREEN` guards all display code
+- **Notification system:** `NotificationRenderer` handles banners, text input, overlays
+
+## Protobuf & Messaging
+
+### Generated Code
+
+- **Source:** External protobuf definitions (regenerate with `bin/regen-protos.sh`)
+- **Location:** `src/mesh/generated/meshtastic/*.pb.{h,cpp}`
+- **Usage:** Each module typically handles one protobuf message type
+
+### Message Flow
+
+```cpp
+// Typical module message handling
+ProcessMessage handleReceived(const meshtastic_MeshPacket &mp) {
+    if (mp.decoded.portnum == meshtastic_PortNum_YOUR_APP) {
+        // Process your message type
+        return ProcessMessage::STOP; // or CONTINUE
+    }
+    return ProcessMessage::CONTINUE;
+}
+```
+
+## Platform-Specific Patterns
+
+### ESP32 Specifics
+
+- **WiFi integration:** `src/mesh/wifi/` and `src/mesh/http/`
+- **Bluetooth:** NimBLE stack in `src/nimble/`
+- **Power management:** Advanced sleep modes, battery monitoring
+
+### Hardware Integration
+
+- **CardKB detection:** Global `kb_found` variable from InputBroker
+- **Sensor modules:** Auto-detected I2C sensors with modular drivers
+- **Radio interfaces:** RadioLib-based with chip-specific classes (`SX1262Interface`, etc.)
+
+## Critical Development Notes
+
+### Code Style & Contributions
+
+- **English comments only** - translate any Spanish comments
+- **Incremental changes** - insert new code, avoid moving/deleting existing code
+- **Pull request oriented** - changes expected as PRs to upstream
+- **Hardware conditional** - always guard hardware-specific code with appropriate `#if` directives
+
+### Current Focus Areas
+
+- **WiFi menu system** - ongoing work on WiFi configuration UI
+- **Chat history** - screen-based message history with node/channel support
+- **CardKB integration** - physical keyboard support for input scenarios
+
+### Common Issues
+
+- **UI focus management** - ensure proper `requestFocus()`/`setFrames()` lifecycle
+- **Memory constraints** - especially on nRF52, use `MESHTASTIC_EXCLUDE_*` flags
+- **Platform differences** - test across ESP32/nRF52 for compatibility
+
+## Essential Commands
+
+```bash
+# Build for specific target
+pio run -e heltec-v3
+
+# Flash with auto-detection
+bin/device-install.sh  # or .bat on Windows
+
+# Regenerate protobuf files
+bin/regen-protos.sh
+
+# Check all targets build
+bin/check-all.sh
+```
+
+ojo con los espacios trunk

@@ -1586,14 +1586,10 @@ void menuHandler::handleMenuSwitch(OLEDDisplay *display)
 #if HAS_WIFI && !defined(ARCH_PORTDUINO)
         char hdr[48];
         snprintf(hdr, sizeof(hdr), "WiFi: %s", s_wifiPendingSSID.c_str());
-    // Activate CardKB if available
-        #if !defined(ARCH_PORTDUINO) && !MESHTASTIC_EXCLUDE_I2C
-        if (!::cardKbI2cImpl) {
-            ::cardKbI2cImpl = new CardKbI2cImpl();
-            ::cardKbI2cImpl->init();
-        }
-        #endif
-        screen->showTextInput(hdr, "", 0, [](const std::string &pass) {
+        LOG_INFO("WiFi password prompt: header='%s', kb_found=%d", hdr, kb_found ? 1 : 0);
+
+        // WiFi password callback function
+        auto wifiPasswordCallback = [](const std::string &pass) {
             // persistir config
             config.network.wifi_enabled = true;
             strlcpy(config.network.wifi_ssid, s_wifiPendingSSID.c_str(), sizeof(config.network.wifi_ssid));
@@ -1606,7 +1602,21 @@ void menuHandler::handleMenuSwitch(OLEDDisplay *display)
             delay(50);
             WiFi.begin(s_wifiPendingSSID.c_str(), pass.c_str());
             if (screen) screen->showSimpleBanner("Connecting...", 2000);
-        });
+        };
+
+        // Use CardKB-friendly input when CardKB is available
+        if (kb_found && cannedMessageModule) {
+            cannedMessageModule->LaunchFreetextKbPrompt(hdr, "", wifiPasswordCallback);
+        } else {
+            // Activate CardKB if available for fallback
+            #if !defined(ARCH_PORTDUINO) && !MESHTASTIC_EXCLUDE_I2C
+            if (!::cardKbI2cImpl) {
+                ::cardKbI2cImpl = new CardKbI2cImpl();
+                ::cardKbI2cImpl->init();
+            }
+            #endif
+            screen->showTextInput(hdr, "", 0, wifiPasswordCallback);
+        }
 #endif
         menuQueue = menu_none;
         return;
