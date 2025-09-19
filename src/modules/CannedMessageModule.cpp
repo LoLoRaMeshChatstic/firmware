@@ -197,6 +197,9 @@ void CannedMessageModule::LaunchFreetextKbPrompt(const char* header,
     customCallback = onSubmit;
     customHeader = header ? header : "Input";
 
+    // Set pending header for virtual keyboard (when CardKB not available)
+    g_pendingKeyboardHeader = customHeader.c_str();
+
     // Set initial text if provided
     freetext = initial.c_str();
     cursor = freetext.length();
@@ -1213,6 +1216,7 @@ int32_t CannedMessageModule::runOnce()
                     // Reset custom callback and clear all state
                     customCallback = nullptr;
                     customHeader = "";
+                    g_pendingKeyboardHeader.clear(); // Clear virtual keyboard header
                     freetext = "";
                     cursor = 0;
                     payload = 0;
@@ -1236,6 +1240,7 @@ int32_t CannedMessageModule::runOnce()
                 if (customCallback) {
                     customCallback = nullptr;
                     customHeader = "";
+                    g_pendingKeyboardHeader.clear(); // Clear virtual keyboard header
                     freetext = "";
                     cursor = 0;
                     payload = 0;
