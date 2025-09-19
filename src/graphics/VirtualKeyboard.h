@@ -43,10 +43,6 @@ class VirtualKeyboard
     void resetTimeout();
     bool isTimedOut() const;
 
-    void insertCharacter(char c); // Insert character into input
-    void deleteCharacter();       // Delete character from input
-    void submitText();            // Submit text input
-
   private:
     static const uint8_t KEYBOARD_ROWS = 4;
     static const uint8_t KEYBOARD_COLS = 11;
@@ -75,7 +71,10 @@ class VirtualKeyboard
     // Unified cursor movement helper
     void moveCursorDelta(int dRow, int dCol);
 
-  char getCharForKey(const VirtualKey &key, bool isLongPress = false);
+    char getCharForKey(const VirtualKey &key, bool isLongPress = false);
+    void insertCharacter(char c); // Insert character into input
+    void deleteCharacter();       // Delete character from input
+    void submitText();            // Submit text input
 };
 
 } // namespace graphics

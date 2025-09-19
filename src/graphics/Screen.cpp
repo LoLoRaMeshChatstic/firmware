@@ -2174,29 +2174,8 @@ int Screen::handleInputEvent(const InputEvent *event)
     if (!screenOn)
         return 0;
 
-    // Manejo explícito de eventos CardKB en el prompt WiFi
+    // Handle text input notifications specially - pass input to virtual keyboard
     if (NotificationRenderer::current_notification_type == notificationTypeEnum::text_input) {
-        if (NotificationRenderer::virtualKeyboard) {
-            switch (event->inputEvent) {
-                case INPUT_BROKER_SELECT: // Enter
-                    NotificationRenderer::virtualKeyboard->submitText();
-                    break;
-                case INPUT_BROKER_BACK: // Backspace
-                    NotificationRenderer::virtualKeyboard->deleteCharacter();
-                    break;
-                case INPUT_BROKER_CANCEL: // Esc
-                    if (NotificationRenderer::virtualKeyboard->getInputText().size() > 0) {
-                        NotificationRenderer::virtualKeyboard->setInputText("");
-                    }
-                    break;
-                default:
-                    // Si es un carácter, añadirlo
-                    if (event->kbchar) {
-                        NotificationRenderer::virtualKeyboard->insertCharacter(event->kbchar);
-                    }
-                    break;
-            }
-        }
         NotificationRenderer::inEvent = *event;
         static OverlayCallback overlays[] = {graphics::UIRenderer::drawNavigationBar, NotificationRenderer::drawBannercallback};
         ui->setOverlays(overlays, sizeof(overlays) / sizeof(overlays[0]));
