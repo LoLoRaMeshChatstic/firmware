@@ -14,6 +14,7 @@
 #include "graphics/Screen.h"
 #include "graphics/SharedUIDisplay.h"
 #include "graphics/draw/NotificationRenderer.h"
+#include "graphics/draw/UIRenderer.h"
 #include "graphics/emotes.h"
 #include "graphics/images.h"
 #include "main.h" // for cardkb_found
@@ -404,6 +405,20 @@ bool CannedMessageModule::isCharInputAllowed() const
  */
 int CannedMessageModule::handleInputEvent(const InputEvent *event)
 {
+    // === NodeInfo Input Handling - PRIORITY CHECK ===
+    if (graphics::UIRenderer::currentFavoriteNodeNum != 0) {
+        LOG_DEBUG("CannedMessage: NodeInfo input - favNode=%d, event=%d, kbchar=%d", 
+                  graphics::UIRenderer::currentFavoriteNodeNum, event->inputEvent, event->kbchar);
+        
+        // ANY key should close NodeInfo and return to normal frames
+        graphics::UIRenderer::currentFavoriteNodeNum = 0;
+        if (screen) {
+            screen->setFrames(graphics::Screen::FOCUS_PRESERVE);
+        }
+        LOG_DEBUG("CannedMessage: NodeInfo closed by input");
+        return 1; // Consumed
+    }
+
     // Block ALL input if an alert banner is active
     if (screen && screen->isOverlayBannerShowing()) {
         return 0;

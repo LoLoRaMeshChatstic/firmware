@@ -2105,10 +2105,70 @@ int Screen::handleTextMessage(const meshtastic_MeshPacket *packet)
                 }
             }
 
+            // === RESETEAR SCROLL ANTES DEL SALTO ===
+            // Si vamos a saltar o ya estamos en el chat correcto, resetear scroll al final
+            uint8_t currentFrame = ui->getUiState()->currentFrame;
+            bool shouldResetScroll = false;
+            
+            if (isDirect) {
+                // Verificar si vamos a saltar a este DM o ya estamos en él
+                if (jumpTo != 0xFF) {
+                    shouldResetScroll = true; // Vamos a saltar a este DM
+                } else if (g_favChatFirst != (size_t)-1 && currentFrame >= g_favChatFirst && currentFrame <= g_favChatLast) {
+                    auto it = std::find(g_favChatNodes.begin(), g_favChatNodes.end(), packet->from);
+                    if (it != g_favChatNodes.end()) {
+                        uint8_t expectedFrame = (uint8_t)(g_favChatFirst + (it - g_favChatNodes.begin()));
+                        if (currentFrame == expectedFrame) {
+                            shouldResetScroll = true; // Ya estamos en este DM
+                        }
+                    }
+                }
+                
+                if (shouldResetScroll) {
+                    ScrollState &st = g_nodeScroll[packet->from];
+                    const auto& dmHistory = chat::ChatHistoryStore::instance().getDM(packet->from);
+                    int totalMessages = (int)dmHistory.size();
+                    const int maxVisibleLines = std::max(3, (dispdev->getHeight() - 20) / 10); // Mínimo 3 líneas
+                    st.scrollIndex = std::max(0, totalMessages - maxVisibleLines);
+                    st.sel = std::max(0, std::min(totalMessages - 1, maxVisibleLines - 1));
+                    st.lastMs = millis(); // Marcar como actualizado
+                }
+            } else {
+                // Mensaje de canal
+                uint8_t ch = (uint8_t)packet->channel;
+                if (jumpTo != 0xFF) {
+                    shouldResetScroll = true; // Vamos a saltar a este canal
+                } else if (g_chanTabFirst != (size_t)-1 && currentFrame >= g_chanTabFirst && currentFrame <= g_chanTabLast) {
+                    auto itc = std::find(g_chanTabs.begin(), g_chanTabs.end(), ch);
+                    if (itc != g_chanTabs.end()) {
+                        uint8_t expectedFrame = (uint8_t)(g_chanTabFirst + (itc - g_chanTabs.begin()));
+                        if (currentFrame == expectedFrame) {
+                            shouldResetScroll = true; // Ya estamos en este canal
+                        }
+                    }
+                }
+                
+                if (shouldResetScroll) {
+                    ScrollState &st = g_chanScroll[ch];
+                    const auto& chanHistory = chat::ChatHistoryStore::instance().getCHAN(ch);
+                    int totalMessages = (int)chanHistory.size();
+                    const int maxVisibleLines = std::max(3, (dispdev->getHeight() - 20) / 10); // Mínimo 3 líneas
+                    st.scrollIndex = std::max(0, totalMessages - maxVisibleLines);
+                    st.sel = std::max(0, std::min(totalMessages - 1, maxVisibleLines - 1));
+                    st.lastMs = millis(); // Marcar como actualizado
+                }
+            }
+
             if (jumpTo != 0xFF) {
                 ui->switchToFrame(jumpTo);
                 setFastFramerate();
                 forceDisplay();
+            }
+            
+            // Si reseteamos scroll, forzar redibujado adicional
+            if (shouldResetScroll) {
+                setFastFramerate();
+                forceDisplay(true); // Forzar actualización UI
             }
 
         }
@@ -2171,6 +2231,10 @@ static inline bool isLongPressEvent(int ev) {
 
 int Screen::handleInputEvent(const InputEvent *event)
 {
+    LOG_DEBUG("=== INPUT EVENT === event=%d, kbchar=%d, showingNormal=%d, favNode=%d", 
+              event->inputEvent, event->kbchar, showingNormalScreen, 
+              graphics::UIRenderer::currentFavoriteNodeNum);
+
     if (!screenOn)
         return 0;
 
@@ -2199,6 +2263,19 @@ int Screen::handleInputEvent(const InputEvent *event)
 
         menuHandler::handleMenuSwitch(dispdev);
         return 0;
+    }
+
+    // === DEBUG: NodeInfo Input Handling ===
+    if (graphics::UIRenderer::currentFavoriteNodeNum != 0) {
+        LOG_DEBUG("NodeInfo input - showingNormal=%d, favNode=%d, event=%d, kbchar=%d", 
+                  showingNormalScreen, graphics::UIRenderer::currentFavoriteNodeNum, 
+                  event->inputEvent, event->kbchar);
+        
+        // ANY key should close NodeInfo and return to normal frames
+        graphics::UIRenderer::currentFavoriteNodeNum = 0;
+        setFrames(FOCUS_PRESERVE);
+        LOG_DEBUG("NodeInfo closed, returning to normal frames");
+        return 1; // Consumed
     }
 
     // Use left or right input from a keyboard to move between frames,
