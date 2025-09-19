@@ -7,6 +7,11 @@
 #include "graphics/Screen.h"
 #include "modules/ChatHistoryStore.h" //for chat history
 #include <string>
+
+// Declaration for marquee auto-scroll function
+namespace graphics {
+    void resetScrollToTop(uint32_t nodeIdOrDest, bool isDM);
+}
 TextMessageModule *textMessageModule;
 
 ProcessMessage TextMessageModule::handleReceived(const meshtastic_MeshPacket &mp)
@@ -53,6 +58,8 @@ ProcessMessage TextMessageModule::handleReceived(const meshtastic_MeshPacket &mp
             /*outgoing=*/false,
             text,
             ts);
+        // Auto-scroll to newest message when new DM arrives
+        graphics::resetScrollToTop(static_cast<uint32_t>(mp.from), true);
     } else {
         chat::ChatHistoryStore::instance().addCHAN(
             channelIndex,
@@ -60,6 +67,8 @@ ProcessMessage TextMessageModule::handleReceived(const meshtastic_MeshPacket &mp
             /*outgoing=*/false,
             text,
             ts);
+        // Auto-scroll to newest message when new channel message arrives
+        graphics::resetScrollToTop(channelIndex, false);
     }
 
     return ProcessMessage::CONTINUE;
@@ -96,12 +105,16 @@ bool TextMessageModule::sendText(uint32_t to, uint8_t channel, const std::string
             /*outgoing=*/true,
             text,
             millis()/1000);
+        // Auto-scroll to newest message when sending to channel
+        graphics::resetScrollToTop(channel, false);
     } else {
         chat::ChatHistoryStore::instance().addDM(
             to,
             /*outgoing=*/true,
             text,
             millis()/1000);
+        // Auto-scroll to newest message when sending DM
+        graphics::resetScrollToTop(to, true);
     }
 
     return true;

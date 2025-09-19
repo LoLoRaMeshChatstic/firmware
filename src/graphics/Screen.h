@@ -218,6 +218,8 @@ class Screen : public concurrency::OSThread
 
   public:
     OLEDDisplay *getDisplayDevice() { return dispdev; }
+    OLEDDisplayUi *getUI() { return ui; }
+    bool isShowingNormalScreen() const { return showingNormalScreen; }
     explicit Screen(ScanI2C::DeviceAddress, meshtastic_Config_DisplayConfig_OledType, OLEDDISPLAY_GEOMETRY);
     size_t frameCount = 0; // Total number of active frames
     ~Screen();
@@ -760,6 +762,9 @@ class Screen : public concurrency::OSThread
     /// UI helper for rendering to frames and switching between them
     OLEDDisplayUi *ui;
 };
+
+// Marquee auto-scroll functions
+void resetScrollToTop(uint32_t nodeIdOrDest, bool isDM);
 
 } // namespace graphics
 

@@ -80,6 +80,7 @@ using graphics::numEmotes;
 extern uint16_t TFT_MESH;
 extern bool g_chatScrollByPress;  // comes from MenuHandler.cpp
 extern RotaryEncoderInterruptImpl1 *rotaryEncoderInterruptImpl1;
+extern graphics::Screen *screen;  // Global screen instance
 
 #if HAS_WIFI && !defined(ARCH_PORTDUINO)
 #include "mesh/wifi/WiFiAPClient.h"
@@ -255,6 +256,14 @@ struct ScrollState {
 static std::map<uint32_t, ScrollState> g_nodeScroll; //  node (DM)
 static std::map<uint8_t , ScrollState> g_chanScroll; //  channel
 
+// Marquee auto-scroll control
+static uint32_t g_lastInteractionMs = 0;   // Last user interaction timestamp
+static const uint32_t MARQUEE_TIMEOUT_MS = 30000; // 30 seconds timeout
+static uint8_t g_previousFrame = 0xFF;     // Track frame changes for auto-scroll on enter
+
+// Forward declarations
+static void updateLastInteraction();
+
 // Helpers (in case we ever treat channel as a "virtual node")
 static inline bool isVirtualChannelNode(uint32_t nodeId) { return (nodeId & 0xC0000000u) == 0xC0000000u; }
 static inline uint8_t channelOfVirtual(uint32_t nodeId)  { return (uint8_t)(nodeId & 0xFFu); }
@@ -282,6 +291,116 @@ static std::string marqueeSlice(const std::string& in, ScrollState& st, int cap,
     if (o + cap <= n) return padded.substr(o, cap);
     std::string s1 = padded.substr(o);
     return s1 + padded.substr(0, cap - (int)s1.size());
+}
+
+// Marquee auto-scroll functions
+static void updateLastInteraction() {
+    g_lastInteractionMs = millis();
+}
+
+void resetScrollToTop(uint32_t nodeId, bool isDM) {
+    if (!screen) return;  // Use global screen instance
+
+    if (isDM) {
+        ScrollState &st = g_nodeScroll[nodeId];
+        const auto& dmHistory = chat::ChatHistoryStore::instance().getDM(nodeId);
+        int totalMessages = (int)dmHistory.size();
+        if (totalMessages > 0) {
+            // Reset to top (newest messages first)
+            st.scrollIndex = 0;  // Start at the beginning (newest messages)
+            st.sel = 0;          // Select first item (newest message)
+            st.offset = 0;       // Reset horizontal scroll too
+            st.lastMs = millis();
+        }
+    } else {
+        uint8_t ch = (uint8_t)nodeId;
+        ScrollState &st = g_chanScroll[ch];
+        const auto& chanHistory = chat::ChatHistoryStore::instance().getCHAN(ch);
+        int totalMessages = (int)chanHistory.size();
+        if (totalMessages > 0) {
+            // Reset to top (newest messages first)
+            st.scrollIndex = 0;  // Start at the beginning (newest messages)
+            st.sel = 0;          // Select first item (newest message)
+            st.offset = 0;       // Reset horizontal scroll too
+            st.lastMs = millis();
+        }
+    }
+}
+
+void checkMarqueeTimeout() {
+    if (!screen) return;  // Use global screen instance
+
+    if (g_lastInteractionMs == 0) {
+        g_lastInteractionMs = millis(); // Initialize on first call
+        return;
+    }
+
+    uint32_t now = millis();
+    if (now - g_lastInteractionMs >= MARQUEE_TIMEOUT_MS) {
+        // 30 seconds without interaction - reset current chat to top
+        if (screen->getUI() && screen->isShowingNormalScreen()) {
+            uint8_t currentFrame = screen->getUI()->getUiState()->currentFrame;
+
+            // Check if we're in a DM chat
+            if (g_favChatFirst != (size_t)-1 && currentFrame >= g_favChatFirst && currentFrame <= g_favChatLast) {
+                size_t index = currentFrame - g_favChatFirst;
+                if (index < g_favChatNodes.size()) {
+                    uint32_t nodeId = g_favChatNodes[index];
+                    resetScrollToTop(nodeId, true);
+                    LOG_DEBUG("Marquee timeout: reset DM scroll for node %08x", nodeId);
+                }
+            }
+            // Check if we're in a channel chat
+            else if (g_chanTabFirst != (size_t)-1 && currentFrame >= g_chanTabFirst && currentFrame <= g_chanTabLast) {
+                size_t index = currentFrame - g_chanTabFirst;
+                if (index < g_chanTabs.size()) {
+                    uint8_t ch = g_chanTabs[index];
+                    resetScrollToTop(ch, false);
+                    LOG_DEBUG("Marquee timeout: reset channel scroll for ch %d", ch);
+                }
+            }
+        }
+        g_lastInteractionMs = now; // Reset timer
+    }
+}
+
+void checkFrameChange() {
+    if (!screen || !screen->getUI() || !screen->isShowingNormalScreen()) return;
+
+    uint8_t currentFrame = screen->getUI()->getUiState()->currentFrame;
+
+    // Check if frame has changed
+    if (g_previousFrame != 0xFF && g_previousFrame != currentFrame) {
+        // Frame changed - check if we entered a chat frame
+        bool enteredChat = false;
+
+        // Check if we entered a DM chat
+        if (g_favChatFirst != (size_t)-1 && currentFrame >= g_favChatFirst && currentFrame <= g_favChatLast) {
+            size_t index = currentFrame - g_favChatFirst;
+            if (index < g_favChatNodes.size()) {
+                uint32_t nodeId = g_favChatNodes[index];
+                resetScrollToTop(nodeId, true);
+                LOG_DEBUG("Frame change: reset DM scroll for node %08x (frame %d->%d)", nodeId, g_previousFrame, currentFrame);
+                enteredChat = true;
+            }
+        }
+        // Check if we entered a channel chat
+        else if (g_chanTabFirst != (size_t)-1 && currentFrame >= g_chanTabFirst && currentFrame <= g_chanTabLast) {
+            size_t index = currentFrame - g_chanTabFirst;
+            if (index < g_chanTabs.size()) {
+                uint8_t ch = g_chanTabs[index];
+                resetScrollToTop(ch, false);
+                LOG_DEBUG("Frame change: reset channel scroll for ch %d (frame %d->%d)", ch, g_previousFrame, currentFrame);
+                enteredChat = true;
+            }
+        }
+
+        if (enteredChat) {
+            updateLastInteraction(); // Reset timeout when entering chat
+        }
+    }
+
+    g_previousFrame = currentFrame;
 }
 
 // ===================== NODE =====================
@@ -1434,6 +1553,12 @@ int32_t Screen::runOnce()
 
     // Gestionar FPS según haya marquee activo o no
     if (ui->getUiState()->frameState == FIXED) {
+        // Check for frame changes to reset scroll when entering chat
+        checkFrameChange();
+
+        // Check for marquee timeout (30 seconds without interaction)
+        checkMarqueeTimeout();
+
         if (g_chatScrollActive) {
             if (targetFramerate == IDLE_FRAMERATE) {
                 setFastFramerate();
@@ -2234,6 +2359,9 @@ int Screen::handleInputEvent(const InputEvent *event)
     LOG_DEBUG("=== INPUT EVENT === event=%d, kbchar=%d, showingNormal=%d, favNode=%d", 
               event->inputEvent, event->kbchar, showingNormalScreen, 
               graphics::UIRenderer::currentFavoriteNodeNum);
+
+    // Update interaction timestamp for marquee timeout
+    updateLastInteraction();
 
     if (!screenOn)
         return 0;
