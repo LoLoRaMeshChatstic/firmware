@@ -79,6 +79,7 @@ using graphics::numEmotes;
 
 extern uint16_t TFT_MESH;
 extern bool g_chatScrollByPress;  // comes from MenuHandler.cpp
+extern bool g_chatScrollUpDown;   // comes from MenuHandler.cpp
 extern RotaryEncoderInterruptImpl1 *rotaryEncoderInterruptImpl1;
 extern graphics::Screen *screen;  // Global screen instance
 
@@ -406,11 +407,11 @@ void checkFrameChange() {
 // ===================== NODE =====================
 static void openChatActionsForNode(uint32_t nodeId)
 {
-    // Dynamic options (max 5 visible here)
-    enum { kPreset = 1, kFree = 2, kRemove = 3, kInfo = 4, kScroll = 5, kBack = 6 };
+    // Dynamic options (max 7 visible here)
+    enum { kPreset = 1, kFree = 2, kRemove = 3, kInfo = 4, kScroll = 5, kScrollType = 6, kBack = 7 };
 
-    static const char* opts[6];
-    static int         enums[6];
+    static const char* opts[7];
+    static int         enums[7];
     int count = 0;
 
     // Preset / Freetext according to CardKB
@@ -435,11 +436,20 @@ static void openChatActionsForNode(uint32_t nodeId)
 
     // Scroll Btn only if there is NO CardKB and NO rotary encoder
     static char scrollLabel[24];
+    static char scrollTypeLabel[24];
     if (!kb_found && rotaryEncoderInterruptImpl1 == nullptr) {
         snprintf(scrollLabel, sizeof(scrollLabel), "Scroll Btn: %s", g_chatScrollByPress ? "ON" : "OFF");
         opts[count]  = scrollLabel;
         enums[count] = kScroll;
         count++;
+
+        // Show scroll direction option only when scroll button is ON
+        if (g_chatScrollByPress) {
+            snprintf(scrollTypeLabel, sizeof(scrollTypeLabel), "Scroll Dir: %s", g_chatScrollUpDown ? "UP" : "DOWN");
+            opts[count]  = scrollTypeLabel;
+            enums[count] = kScrollType;
+            count++;
+        }
     }
 
     opts[count]  = "Back";
@@ -484,6 +494,11 @@ static void openChatActionsForNode(uint32_t nodeId)
             if (screen) screen->showSimpleBanner(g_chatScrollByPress ? "Scroll Btn: ON" : "Scroll Btn: OFF", 1200);
             break;
 
+        case kScrollType:
+            g_chatScrollUpDown = !g_chatScrollUpDown;
+            if (screen) screen->showSimpleBanner(g_chatScrollUpDown ? "Scroll Dir: UP" : "Scroll Dir: DOWN", 1200);
+            break;
+
         default:
             break;
         }
@@ -498,10 +513,10 @@ static void openChatActionsForNode(uint32_t nodeId)
 // ===================== CHANNEL =====================
 static void openChatActionsForChannel(uint8_t ch)
 {
-    enum { kPreset = 1, kFree = 2, kRemove = 3, kScroll = 4, kBack = 5 };
+    enum { kPreset = 1, kFree = 2, kRemove = 3, kScroll = 4, kScrollType = 5, kBack = 6 };
 
-    static const char* opts[5];
-    static int         enums[5];
+    static const char* opts[6];
+    static int         enums[6];
     int count = 0;
 
     // Preset / Freetext according to CardKB
@@ -522,11 +537,19 @@ static void openChatActionsForChannel(uint8_t ch)
 
     // Scroll Btn only if there is NO CardKB and NO rotary encoder
     static char scrollLabel[24];
+    static char scrollTypeLabel[24];
     if (!kb_found && rotaryEncoderInterruptImpl1 == nullptr) {
         snprintf(scrollLabel, sizeof(scrollLabel), "Scroll Btn: %s", g_chatScrollByPress ? "ON" : "OFF");
         opts[count]  = scrollLabel;
         enums[count] = kScroll;
         count++;
+        // Show scroll direction option only when scroll button is ON
+        if (g_chatScrollByPress) {
+            snprintf(scrollTypeLabel, sizeof(scrollTypeLabel), "Scroll Dir: %s", g_chatScrollUpDown ? "UP" : "DOWN");
+            opts[count]  = scrollTypeLabel;
+            enums[count] = kScrollType;
+            count++;
+        }
     }
 
     opts[count]  = "Back";
@@ -578,6 +601,10 @@ static void openChatActionsForChannel(uint8_t ch)
         case kScroll:
             g_chatScrollByPress = !g_chatScrollByPress;
             if (screen) screen->showSimpleBanner(g_chatScrollByPress ? "Scroll Btn: ON" : "Scroll Btn: OFF", 1200);
+            break;
+        case kScrollType:
+            g_chatScrollUpDown = !g_chatScrollUpDown;
+            if (screen) screen->showSimpleBanner(g_chatScrollUpDown ? "Scroll Dir: UP" : "Scroll Dir: DOWN", 1200);
             break;
         default:
             break;
@@ -2525,12 +2552,13 @@ int Screen::handleInputEvent(const InputEvent *event)
 
     // --- scroll by SHORT PRESS (only if enabled) ---
     if (g_chatScrollByPress && event->inputEvent == INPUT_BROKER_USER_PRESS) {
+        int direction = g_chatScrollUpDown ? +1 : -1;  // UP = +1, DOWN = -1
         if (inNodeChat) {
             uint32_t nodeId = g_favChatNodes[(size_t)cf - g_favChatFirst];
-            moveSelDM(nodeId, +1);
+            moveSelDM(nodeId, direction);
         } else {
             uint8_t ch = g_chanTabs[(size_t)cf - g_chanTabFirst];
-            moveSelCH(ch, +1);
+            moveSelCH(ch, direction);
         }
         return 1;
     }
