@@ -23,23 +23,34 @@ std::string ChatEntry::serialize(const ChatEntry& e) {
 
 ChatEntry ChatEntry::deserialize(const std::string& line) {
   ChatEntry e;
-  std::stringstream ss(line);
-  std::string item;
-  std::getline(ss, item, ','); e.ts = std::stoul(item);
-  std::getline(ss, item, ','); e.outgoing = std::stoi(item);
-  std::getline(ss, item, ','); e.isChannel = std::stoi(item);
-  std::getline(ss, item, ','); e.node = std::stoul(item);
-  std::getline(ss, item, ','); e.channel = std::stoul(item);
-  std::getline(ss, item); // resto es texto
-  // Desescapar comas
-  size_t pos = 0, last = 0;
-  std::string txt;
-  while ((pos = item.find("<c>", last)) != std::string::npos) {
-    txt += item.substr(last, pos - last) + ',';
-    last = pos + 3;
+  try {
+    std::stringstream ss(line);
+    std::string item;
+    if (!std::getline(ss, item, ',')) return e;
+    e.ts = std::stoul(item);
+    if (!std::getline(ss, item, ',')) return e; 
+    e.outgoing = std::stoi(item);
+    if (!std::getline(ss, item, ',')) return e;
+    e.isChannel = std::stoi(item);
+    if (!std::getline(ss, item, ',')) return e;
+    e.node = std::stoul(item);
+    if (!std::getline(ss, item, ',')) return e;
+    e.channel = std::stoul(item);
+    if (!std::getline(ss, item)) return e; // resto es texto
+    
+    // Desescapar comas
+    size_t pos = 0, last = 0;
+    std::string txt;
+    while ((pos = item.find("<c>", last)) != std::string::npos) {
+      txt += item.substr(last, pos - last) + ',';
+      last = pos + 3;
+    }
+    txt += item.substr(last);
+    e.text = txt;
+  } catch (...) {
+    // Si hay error en el parsing, devolver entrada vacía
+    e = ChatEntry{};
   }
-  txt += item.substr(last);
-  e.text = txt;
   return e;
 }
 
@@ -50,7 +61,8 @@ ChatHistoryStore& ChatHistoryStore::instance() {
 }
 
 ChatHistoryStore::ChatHistoryStore() {
-  loadAll();
+  // No cargar datos síncronamente en el constructor para evitar bucles de reinicio
+  // La carga se hará bajo demanda
 }
 
 void ChatHistoryStore::pushBounded(std::deque<ChatEntry>& q, ChatEntry e) {
@@ -102,13 +114,25 @@ void ChatHistoryStore::saveDM(uint32_t peer) {
 void ChatHistoryStore::loadDM(uint32_t peer) {
   std::string filename = "/chat_dm_" + std::to_string(peer) + ".txt";
   auto f = FSCom.open(filename.c_str(), FILE_O_READ);
-  if (!f) return;
+  if (!f) return; // Archivo no existe, sin error
+  
   std::deque<ChatEntry> q;
-  while (f.available()) {
-    std::string line = f.readStringUntil('\n').c_str();
-    if (!line.empty()) q.push_back(ChatEntry::deserialize(line));
+  try {
+    while (f.available()) {
+      std::string line = f.readStringUntil('\n').c_str();
+      if (!line.empty() && line.length() < 512) { // Validación básica de tamaño
+        ChatEntry entry = ChatEntry::deserialize(line);
+        // Validación básica de datos
+        if (entry.ts > 0 && entry.ts < 4000000000U && entry.text.length() < 256) {
+          q.push_back(std::move(entry));
+        }
+      }
+    }
+    dm_[peer] = std::move(q);
+  } catch (...) {
+    // Si hay error en la deserialización, ignora el archivo
+    dm_[peer] = std::deque<ChatEntry>();
   }
-  dm_[peer] = q;
   f.close();
 }
 
@@ -125,13 +149,25 @@ void ChatHistoryStore::saveCHAN(uint8_t channel) {
 void ChatHistoryStore::loadCHAN(uint8_t channel) {
   std::string filename = "/chat_ch_" + std::to_string(channel) + ".txt";
   auto f = FSCom.open(filename.c_str(), FILE_O_READ);
-  if (!f) return;
+  if (!f) return; // Archivo no existe, sin error
+  
   std::deque<ChatEntry> q;
-  while (f.available()) {
-    std::string line = f.readStringUntil('\n').c_str();
-    if (!line.empty()) q.push_back(ChatEntry::deserialize(line));
+  try {
+    while (f.available()) {
+      std::string line = f.readStringUntil('\n').c_str();
+      if (!line.empty() && line.length() < 512) { // Validación básica de tamaño
+        ChatEntry entry = ChatEntry::deserialize(line);
+        // Validación básica de datos
+        if (entry.ts > 0 && entry.ts < 4000000000U && entry.text.length() < 256) {
+          q.push_back(std::move(entry));
+        }
+      }
+    }
+    ch_[channel] = std::move(q);
+  } catch (...) {
+    // Si hay error en la deserialización, ignora el archivo
+    ch_[channel] = std::deque<ChatEntry>();
   }
-  ch_[channel] = q;
   f.close();
 }
 
@@ -141,22 +177,41 @@ void ChatHistoryStore::saveAll() {
 }
 
 void ChatHistoryStore::loadAll() {
-  // Cargar todos los archivos de historial existentes
-  // (simple: probar los peers y canales más comunes)
-  for (uint32_t peer = 1; peer < 100; ++peer) loadDM(peer);
-  for (uint8_t ch = 0; ch < 16; ++ch) loadCHAN(ch);
+  // NO cargar agresivamente al inicio para evitar bucles de reinicio
+  // La carga se hace bajo demanda cuando se necesite cada conversación
+  // Esta función queda por compatibilidad pero no hace nada crítico
 }
 
 const std::deque<ChatEntry>& ChatHistoryStore::getDM(uint32_t peer) const {
   auto it = dm_.find(peer);
   if (it != dm_.end()) return it->second;
-  return kEmptyDeque; // Return empty deque if peer not found
+  
+  // Carga bajo demanda con manejo de errores
+  try {
+    const_cast<ChatHistoryStore*>(this)->loadDM(peer);
+    it = dm_.find(peer);
+    if (it != dm_.end()) return it->second;
+  } catch (...) {
+    // Si falla la carga, devolver deque vacío silenciosamente
+  }
+  
+  return kEmptyDeque;
 }
 
 const std::deque<ChatEntry>& ChatHistoryStore::getCHAN(uint8_t channel) const {
   auto it = ch_.find(channel);
   if (it != ch_.end()) return it->second;
-  return kEmptyDeque; // Return empty deque if channel not found
+  
+  // Carga bajo demanda con manejo de errores  
+  try {
+    const_cast<ChatHistoryStore*>(this)->loadCHAN(channel);
+    it = ch_.find(channel);
+    if (it != ch_.end()) return it->second;
+  } catch (...) {
+    // Si falla la carga, devolver deque vacío silenciosamente
+  }
+  
+  return kEmptyDeque;
 }
 
 void ChatHistoryStore::clearDM(uint32_t peer) {
