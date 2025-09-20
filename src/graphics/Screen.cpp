@@ -628,6 +628,37 @@ static void drawLineSmall(OLEDDisplay *display, int16_t x, int16_t y, const char
     display->drawString(x, y, s);
 }
 
+// Function to detect if a message needs extra height (emotes or line breaks)
+static bool needsExtraHeight(const std::string &text) {
+    // Check for multiple newlines (count them)
+    size_t newlineCount = 0;
+    size_t pos = 0;
+    while ((pos = text.find('\n', pos)) != std::string::npos) {
+        newlineCount++;
+        pos++;
+    }
+    if (newlineCount > 0) {
+        return true;
+    }
+    
+    // Check for emotes
+    for (int i = 0; i < numEmotes; ++i) {
+        if (text.find(emotes[i].label) != std::string::npos) {
+            return true;
+        }
+    }
+    return false;
+}
+
+// Function to draw with large emotes when needed, preserving marquee for name part
+static void drawLineWithEmotes(OLEDDisplay *display, int16_t x, int16_t y, const char* s) {
+    display->setTextAlignment(TEXT_ALIGN_LEFT);
+    display->setFont(FONT_SMALL);
+    
+    std::string text(s);
+    graphics::MessageRenderer::drawStringWithEmotes(display, x, y, text, emotes, numEmotes);
+}
+
 
 
 static void drawFavNodeChatFrame(OLEDDisplay *display, OLEDDisplayUiState *state, int16_t x, int16_t y)
@@ -667,7 +698,7 @@ static void drawFavNodeChatFrame(OLEDDisplay *display, OLEDDisplayUiState *state
     const int lineH = 10;
     const int top   = y + 16;
     const int h     = display->height();
-    const int maxLines = (h - 16) / lineH > 4 ? (h - 16) / lineH : 4;
+    const int maxLines = 4; // Fixed number of logical lines
 
     display->setFont(FONT_SMALL);
 
@@ -678,8 +709,8 @@ static void drawFavNodeChatFrame(OLEDDisplay *display, OLEDDisplayUiState *state
         return;
     }
 
-    // Clamp scrollIndex
-    if (st.scrollIndex > total - visibleRows) st.scrollIndex = total - visibleRows;
+    // Clamp scrollIndex with better logic for variable height messages
+    if (st.scrollIndex > total - 1) st.scrollIndex = total - 1;
     if (st.scrollIndex < 0) st.scrollIndex = 0;
     // Clamp sel
     if (st.sel < 0) st.sel = 0;
@@ -691,6 +722,11 @@ static void drawFavNodeChatFrame(OLEDDisplay *display, OLEDDisplayUiState *state
         const auto &e = q[itemIndex];
         std::string who = e.outgoing ? "S" : "R";
         std::string base = who + ": " + e.text;
+        
+        // Check if this message needs extra height
+        bool needsExtra = needsExtraHeight(base);
+        int currentLineH = needsExtra ? lineH * 3 : lineH; // Triple height for emotes/newlines
+        
         std::string view;
         bool needScroll = false;
         const int cap = 22;
@@ -702,14 +738,36 @@ static void drawFavNodeChatFrame(OLEDDisplay *display, OLEDDisplayUiState *state
             else view = base;
         }
         if (needScroll) g_chatScrollActive = true;
-        int lineY = top + row * lineH;
+        
+        // Calculate Y position with dynamic spacing
+        int lineY = top;
+        for (int r = 0; r < row; ++r) {
+            int prevIndex = total - 1 - (st.scrollIndex + r);
+            if (prevIndex >= 0) {
+                const auto &prevE = q[prevIndex];
+                std::string prevWho = prevE.outgoing ? "S" : "R";
+                std::string prevBase = prevWho + ": " + prevE.text;
+                bool prevNeedsExtra = needsExtraHeight(prevBase);
+                lineY += prevNeedsExtra ? lineH * 3 : lineH;
+            }
+        }
+        
+        // Render message - be more permissive with clipping to avoid skipping messages
         if (row == st.sel) {
-            display->fillRect(x, lineY, display->getWidth(), lineH);
+            display->fillRect(x, lineY, display->getWidth(), currentLineH);
             display->setColor(BLACK);
-            drawLineSmall(display, x, lineY, view.c_str());
+            if (needsExtra) {
+                drawLineWithEmotes(display, x, lineY, view.c_str());
+            } else {
+                drawLineSmall(display, x, lineY, view.c_str());
+            }
             display->setColor(WHITE);
         } else {
-            drawLineSmall(display, x, lineY, view.c_str());
+            if (needsExtra) {
+                drawLineWithEmotes(display, x, lineY, view.c_str());
+            } else {
+                drawLineSmall(display, x, lineY, view.c_str());
+            }
         }
     }
 }
@@ -751,7 +809,7 @@ static void drawChannelChatTabFrame(OLEDDisplay *display, OLEDDisplayUiState *st
     const int lineH = 10;
     const int top   = y + 16;
     const int h     = display->height();
-    const int maxLines = (h - 16) / lineH > 4 ? (h - 16) / lineH : 4;
+    const int maxLines = 4; // Fixed number of logical lines
 
     display->setFont(FONT_SMALL);
 
@@ -782,6 +840,11 @@ static void drawChannelChatTabFrame(OLEDDisplay *display, OLEDDisplayUiState *st
             else who = "??";
         }
         std::string base = who + ": " + e.text;
+        
+        // Check if this message needs extra height
+        bool needsExtra = needsExtraHeight(base);
+        int currentLineH = needsExtra ? lineH * 3 : lineH; // Triple height for emotes/newlines
+        
         std::string view;
         bool needScroll = false;
         const int cap = 28;
@@ -793,14 +856,43 @@ static void drawChannelChatTabFrame(OLEDDisplay *display, OLEDDisplayUiState *st
             else view = base;
         }
         if (needScroll) g_chatScrollActive = true;
-        int lineY = top + row * lineH;
+        
+        // Calculate Y position with dynamic spacing
+        int lineY = top;
+        for (int r = 0; r < row; ++r) {
+            int prevIndex = total - 1 - (st.scrollIndex + r);
+            if (prevIndex >= 0) {
+                const auto &prevE = q[prevIndex];
+                std::string prevWho;
+                if (prevE.outgoing) prevWho = "Send";
+                else {
+                    const meshtastic_NodeInfoLite *prevSender = (prevE.node) ? nodeDB->getMeshNode(prevE.node) : nullptr;
+                    if (prevSender && prevSender->has_user && prevSender->user.long_name[0]) prevWho = prevSender->user.long_name;
+                    else if (prevE.node) { char buf[9]; std::snprintf(buf, sizeof(buf), "%08X", (unsigned)prevE.node); prevWho = buf; }
+                    else prevWho = "??";
+                }
+                std::string prevBase = prevWho + ": " + prevE.text;
+                bool prevNeedsExtra = needsExtraHeight(prevBase);
+                lineY += prevNeedsExtra ? lineH * 3 : lineH;
+            }
+        }
+
+        // Render message - be more permissive with clipping to avoid skipping messages
         if (row == st.sel) {
-            display->fillRect(x, lineY, display->getWidth(), lineH);
+            display->fillRect(x, lineY, display->getWidth(), currentLineH);
             display->setColor(BLACK);
-            drawLineSmall(display, x, lineY, view.c_str());
+            if (needsExtra) {
+                drawLineWithEmotes(display, x, lineY, view.c_str());
+            } else {
+                drawLineSmall(display, x, lineY, view.c_str());
+            }
             display->setColor(WHITE);
         } else {
-            drawLineSmall(display, x, lineY, view.c_str());
+            if (needsExtra) {
+                drawLineWithEmotes(display, x, lineY, view.c_str());
+            } else {
+                drawLineSmall(display, x, lineY, view.c_str());
+            }
         }
     }
 }
@@ -2451,21 +2543,57 @@ int Screen::handleInputEvent(const InputEvent *event)
             bool inNodeChat = (g_favChatFirst != (size_t)-1 && cf >= g_favChatFirst && cf <= g_favChatLast);
             bool inChanChat = (g_chanTabFirst != (size_t)-1 && cf >= g_chanTabFirst && cf <= g_chanTabLast);
 
-            auto moveSelDM = [&](uint32_t nodeId, int dir) {
+            // Helper function to calculate how many messages fit on screen with dynamic heights
+            auto calculateVisibleRowsDM = [&](uint32_t nodeId, int scrollIndex) -> int {
                 const auto &q = chat::ChatHistoryStore::instance().getDM(nodeId);
                 const int h = dispdev->getHeight();
                 const int lineH = 10;
-                const int maxLines = ((h - 16) / lineH > 4) ? ((h - 16) / lineH) : 4;
+                const int availableHeight = h - 16; // account for UI elements
                 const int total = (int)q.size();
-                const int visibleRows = std::min(total, maxLines);
-                if (visibleRows <= 0) return;
+                
+                int usedHeight = 0;
+                int visibleCount = 0;
+                
+                for (int i = 0; i < total - scrollIndex; ++i) {
+                    int itemIndex = total - 1 - (scrollIndex + i);
+                    if (itemIndex < 0) break;
+                    
+                    const auto &e = q[itemIndex];
+                    std::string who = e.outgoing ? "S" : "R";
+                    std::string base = who + ": " + e.text;
+                    bool needsExtra = needsExtraHeight(base);
+                    int currentLineH = needsExtra ? lineH * 3 : lineH;
+                    
+                    if (usedHeight + currentLineH <= availableHeight) {
+                        usedHeight += currentLineH;
+                        visibleCount++;
+                    } else {
+                        break;
+                    }
+                }
+                
+                return std::max(1, std::min(visibleCount, 4)); // Ensure at least 1, max 4
+            };
+
+            auto moveSelDM = [&](uint32_t nodeId, int dir) {
+                const auto &q = chat::ChatHistoryStore::instance().getDM(nodeId);
+                const int total = (int)q.size();
+                if (total <= 0) return;
+                
                 ScrollState &st = g_nodeScroll[nodeId];
+                const int visibleRows = calculateVisibleRowsDM(nodeId, st.scrollIndex);
+                
                 // Sliding window navigation
                 if (dir > 0) {
                     if (st.sel < visibleRows - 1) {
                         st.sel++;
                     } else if (st.scrollIndex < total - visibleRows) {
                         st.scrollIndex++;
+                        // Recalculate visible rows after scroll
+                        int newVisibleRows = calculateVisibleRowsDM(nodeId, st.scrollIndex);
+                        if (st.sel >= newVisibleRows) {
+                            st.sel = newVisibleRows - 1;
+                        }
                     } else {
                         // wrap to top
                         st.sel = 0;
@@ -2485,21 +2613,57 @@ int Screen::handleInputEvent(const InputEvent *event)
                 st.offset = 0; st.lastMs = millis();
                 setFastFramerate(); forceDisplay();
             };
-            auto moveSelCH = [&](uint8_t ch, int dir) {
+            // Helper function to calculate how many messages fit on screen with dynamic heights for channels
+            auto calculateVisibleRowsCH = [&](uint8_t ch, int scrollIndex) -> int {
                 const auto &q = chat::ChatHistoryStore::instance().getCHAN(ch);
                 const int h = dispdev->getHeight();
                 const int lineH = 10;
-                const int maxLines = ((h - 16) / lineH > 4) ? ((h - 16) / lineH) : 4;
+                const int availableHeight = h - 16; // account for UI elements
                 const int total = (int)q.size();
-                const int visibleRows = std::min(total, maxLines);
-                if (visibleRows <= 0) return;
+                
+                int usedHeight = 0;
+                int visibleCount = 0;
+                
+                for (int i = 0; i < total - scrollIndex; ++i) {
+                    int itemIndex = total - 1 - (scrollIndex + i);
+                    if (itemIndex < 0) break;
+                    
+                    const auto &e = q[itemIndex];
+                    std::string who = e.outgoing ? "S" : "R";
+                    std::string base = who + ": " + e.text;
+                    bool needsExtra = needsExtraHeight(base);
+                    int currentLineH = needsExtra ? lineH * 3 : lineH;
+                    
+                    if (usedHeight + currentLineH <= availableHeight) {
+                        usedHeight += currentLineH;
+                        visibleCount++;
+                    } else {
+                        break;
+                    }
+                }
+                
+                return std::max(1, std::min(visibleCount, 4)); // Ensure at least 1, max 4
+            };
+
+            auto moveSelCH = [&](uint8_t ch, int dir) {
+                const auto &q = chat::ChatHistoryStore::instance().getCHAN(ch);
+                const int total = (int)q.size();
+                if (total <= 0) return;
+                
                 ScrollState &st = g_chanScroll[ch];
+                const int visibleRows = calculateVisibleRowsCH(ch, st.scrollIndex);
+                
                 // Sliding window navigation
                 if (dir > 0) {
                     if (st.sel < visibleRows - 1) {
                         st.sel++;
                     } else if (st.scrollIndex < total - visibleRows) {
                         st.scrollIndex++;
+                        // Recalculate visible rows after scroll
+                        int newVisibleRows = calculateVisibleRowsCH(ch, st.scrollIndex);
+                        if (st.sel >= newVisibleRows) {
+                            st.sel = newVisibleRows - 1;
+                        }
                     } else {
                         // wrap to top
                         st.sel = 0;
@@ -2526,60 +2690,56 @@ int Screen::handleInputEvent(const InputEvent *event)
                 (inNodeChat || inChanChat) &&
                 (event->inputEvent == INPUT_BROKER_USER_PRESS || event->inputEvent == INPUT_BROKER_SELECT);
 
-                        if (inNodeChat || inChanChat) {
-    // --- move selection with UP/DOWN ---
-    if (event->inputEvent == INPUT_BROKER_UP) {
-        if (inNodeChat) {
-            uint32_t nodeId = g_favChatNodes[(size_t)cf - g_favChatFirst];
-            moveSelDM(nodeId, -1);
-        } else {
-            uint8_t ch = g_chanTabs[(size_t)cf - g_chanTabFirst];
-            moveSelCH(ch, -1);
-        }
-        return 1;
-    }
+            if (inNodeChat || inChanChat) {
+                // --- move selection with UP/DOWN ---
+                if (event->inputEvent == INPUT_BROKER_UP) {
+                    if (inNodeChat) {
+                        uint32_t nodeId = g_favChatNodes[(size_t)cf - g_favChatFirst];
+                        moveSelDM(nodeId, -1);
+                    } else {
+                        uint8_t ch = g_chanTabs[(size_t)cf - g_chanTabFirst];
+                        moveSelCH(ch, -1);
+                    }
+                    return 1;
+                }
 
-    if (event->inputEvent == INPUT_BROKER_DOWN) {
-        if (inNodeChat) {
-            uint32_t nodeId = g_favChatNodes[(size_t)cf - g_favChatFirst];
-            moveSelDM(nodeId, +1);
-        } else {
-            uint8_t ch = g_chanTabs[(size_t)cf - g_chanTabFirst];
-            moveSelCH(ch, +1);
-        }
-        return 1;
-    }
+                if (event->inputEvent == INPUT_BROKER_DOWN) {
+                    if (inNodeChat) {
+                        uint32_t nodeId = g_favChatNodes[(size_t)cf - g_favChatFirst];
+                        moveSelDM(nodeId, +1);
+                    } else {
+                        uint8_t ch = g_chanTabs[(size_t)cf - g_chanTabFirst];
+                        moveSelCH(ch, +1);
+                    }
+                    return 1;
+                }
 
-    // --- scroll by SHORT PRESS (only if enabled) ---
-    if (g_chatScrollByPress && event->inputEvent == INPUT_BROKER_USER_PRESS) {
-        int direction = g_chatScrollUpDown ? +1 : -1;  // UP = +1, DOWN = -1
-        if (inNodeChat) {
-            uint32_t nodeId = g_favChatNodes[(size_t)cf - g_favChatFirst];
-            moveSelDM(nodeId, direction);
-        } else {
-            uint8_t ch = g_chanTabs[(size_t)cf - g_chanTabFirst];
-            moveSelCH(ch, direction);
-        }
-        return 1;
-    }
+                // --- scroll by SHORT PRESS (only if enabled) ---
+                if (g_chatScrollByPress && event->inputEvent == INPUT_BROKER_USER_PRESS) {
+                    int direction = g_chatScrollUpDown ? +1 : -1;  // UP = +1, DOWN = -1
+                    if (inNodeChat) {
+                        uint32_t nodeId = g_favChatNodes[(size_t)cf - g_favChatFirst];
+                        moveSelDM(nodeId, direction);
+                    } else {
+                        uint8_t ch = g_chanTabs[(size_t)cf - g_chanTabFirst];
+                        moveSelCH(ch, direction);
+                    }
+                    return 1;
+                }
 
-    // --- open chat menu with SELECT or SELECT_LONG (always) ---
-    if (event->inputEvent == INPUT_BROKER_SELECT ||
-        event->inputEvent == INPUT_BROKER_SELECT_LONG) {
-        if (inNodeChat) {
-            size_t idx = (size_t)cf - g_favChatFirst;
-            if (idx < g_favChatNodes.size()) openChatActionsForNode(g_favChatNodes[idx]);
-        } else {
-            size_t idx = (size_t)cf - g_chanTabFirst;
-            if (idx < g_chanTabs.size()) openChatActionsForChannel(g_chanTabs[idx]);
-        }
-        return 1;
-    }
-}
-
-
-
-
+                // --- open chat menu with SELECT or SELECT_LONG (always) ---
+                if (event->inputEvent == INPUT_BROKER_SELECT ||
+                    event->inputEvent == INPUT_BROKER_SELECT_LONG) {
+                    if (inNodeChat) {
+                        size_t idx = (size_t)cf - g_favChatFirst;
+                        if (idx < g_favChatNodes.size()) openChatActionsForNode(g_favChatNodes[idx]);
+                    } else {
+                        size_t idx = (size_t)cf - g_chanTabFirst;
+                        if (idx < g_chanTabs.size()) openChatActionsForChannel(g_chanTabs[idx]);
+                    }
+                    return 1;
+                }
+            }
 
             // === GLOBAL BEHAVIOR: UP/DOWN = navigate frames ===
             if (event->inputEvent == INPUT_BROKER_UP) {

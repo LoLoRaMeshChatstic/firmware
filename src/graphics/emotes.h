@@ -109,6 +109,39 @@ extern const unsigned char poo[] PROGMEM;
 #define bell_icon_width 30
 #define bell_icon_height 30
 extern const unsigned char bell_icon[] PROGMEM;
+
+// === New WhatsApp Style Emotes ===
+#define crying_face_height 30
+#define crying_face_width 30
+extern const unsigned char crying_face[] PROGMEM;
+
+#define heart_eyes_height 30
+#define heart_eyes_width 30
+extern const unsigned char heart_eyes[] PROGMEM;
+
+#define kiss_face_height 30
+#define kiss_face_width 30
+extern const unsigned char kiss_face[] PROGMEM;
+
+#define sleeping_face_height 30
+#define sleeping_face_width 30
+extern const unsigned char sleeping_face[] PROGMEM;
+
+#define thinking_face_height 30
+#define thinking_face_width 30
+extern const unsigned char thinking_face[] PROGMEM;
+
+#define ok_hand_height 30
+#define ok_hand_width 30
+extern const unsigned char ok_hand[] PROGMEM;
+
+#define fire_height 30
+#define fire_width 30
+extern const unsigned char fire[] PROGMEM;
+
+#define cool_face_height 30
+#define cool_face_width 30
+extern const unsigned char cool_face[] PROGMEM;
 #endif // EXCLUDE_EMOJI
 
 } // namespace graphics
