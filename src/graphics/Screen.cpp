@@ -38,6 +38,7 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
 #include "draw/NotificationRenderer.h"
 #include "draw/UIRenderer.h"
 #include "modules/CannedMessageModule.h"
+#include "modules/ChatHistoryStore.h"
 
 #if !MESHTASTIC_EXCLUDE_GPS
 #include "GPS.h"
@@ -62,7 +63,6 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
 #include "modules/ExternalNotificationModule.h"
 #include "modules/TextMessageModule.h"
 #include "modules/WaypointModule.h"
-#include "modules/ChatHistoryStore.h"
 #include "sleep.h"
 #include "target_specific.h"
 #include "mesh/MeshTypes.h"   // for NODENUM_BROADCAST
@@ -407,11 +407,11 @@ void checkFrameChange() {
 // ===================== NODE =====================
 static void openChatActionsForNode(uint32_t nodeId)
 {
-    // Dynamic options (max 7 visible here)
-    enum { kPreset = 1, kFree = 2, kRemove = 3, kInfo = 4, kScroll = 5, kScrollType = 6, kBack = 7 };
+    // Dynamic options (max 8 visible here)
+    enum { kPreset = 1, kFree = 2, kRemove = 3, kRemoveFav = 4, kInfo = 5, kScroll = 6, kScrollType = 7, kBack = 8 };
 
-    static const char* opts[7];
-    static int         enums[7];
+    static const char* opts[8];
+    static int         enums[8];
     int count = 0;
 
     // Preset / Freetext according to CardKB
@@ -428,6 +428,10 @@ static void openChatActionsForNode(uint32_t nodeId)
     // Common
     opts[count]  = "Remove Chat";
     enums[count] = kRemove;
+    count++;
+
+    opts[count]  = "Remove Fav";
+    enums[count] = kRemoveFav;
     count++;
 
     opts[count]  = "Node Info";
@@ -478,6 +482,17 @@ static void openChatActionsForNode(uint32_t nodeId)
             break;
 
         case kRemove:
+            // Eliminar historial de chat solamente (RAM + persistente)
+            chat::ChatHistoryStore::instance().clearDM(nodeId);
+            // También eliminar archivo persistente
+            {
+                std::string filename = "/chat_dm_" + std::to_string(nodeId) + ".txt";
+                FSCom.remove(filename.c_str());
+            }
+            if (screen) screen->setFrames(Screen::FOCUS_PRESERVE);
+            break;
+
+        case kRemoveFav:
             if (nodeDB) nodeDB->set_favorite(false, nodeId);
             if (screen) screen->setFrames(Screen::FOCUS_PRESERVE);
             break;
@@ -595,7 +610,13 @@ static void openChatActionsForChannel(uint8_t ch)
             if (cannedMessageModule) cannedMessageModule->LaunchFreetextWithDestination(NODENUM_BROADCAST, ch);
             break;
         case kRemove:
-            g_favChannelTabs.erase(ch);
+            // Eliminar historial de chat pero mantener canal y frame (RAM + persistente)
+            chat::ChatHistoryStore::instance().clearCHAN(ch);
+            // También eliminar archivo persistente
+            {
+                std::string filename = "/chat_ch_" + std::to_string(ch) + ".txt";
+                FSCom.remove(filename.c_str());
+            }
             if (screen) screen->setFrames(Screen::FOCUS_PRESERVE);
             break;
         case kScroll:

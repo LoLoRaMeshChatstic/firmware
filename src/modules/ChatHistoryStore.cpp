@@ -230,6 +230,25 @@ void ChatHistoryStore::removeChannel(uint8_t channel) {
   ch_.erase(channel);
 }
 
+// Nuevas funciones para eliminar solo el historial pero mantener canal/frame
+void ChatHistoryStore::clearChatHistoryDM(uint32_t peer) {
+  // Eliminar de RAM
+  dm_.erase(peer);
+  
+  // Eliminar archivo persistente
+  std::string filename = "/chat_dm_" + std::to_string(peer) + ".txt";
+  FSCom.remove(filename.c_str());
+}
+
+void ChatHistoryStore::clearChatHistoryChannel(uint8_t channel) {
+  // Eliminar de RAM
+  ch_.erase(channel);
+  
+  // Eliminar archivo persistente
+  std::string filename = "/chat_ch_" + std::to_string(channel) + ".txt";
+  FSCom.remove(filename.c_str());
+}
+
 std::vector<uint32_t> ChatHistoryStore::listDMPeers() const {
   std::vector<uint32_t> v;
   v.reserve(dm_.size());

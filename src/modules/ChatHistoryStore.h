@@ -43,6 +43,10 @@ public:
   void removeByNode(uint32_t peer);     // borra toda la conversación DM con ese peer
   void removeChannel(uint8_t channel);  // borra todo el historial del canal
 
+  // Nuevos métodos para eliminar historial completo (RAM + persistente) pero mantener canal/frame
+  void clearChatHistoryDM(uint32_t peer);        // Elimina solo historial DM, mantiene el peer
+  void clearChatHistoryChannel(uint8_t channel); // Elimina solo historial canal, mantiene canal/frame
+
   // Listados
   std::vector<uint32_t> listDMPeers() const;
   std::vector<uint8_t>  listChannels() const;
