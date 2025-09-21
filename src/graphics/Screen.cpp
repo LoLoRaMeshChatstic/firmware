@@ -83,6 +83,9 @@ extern bool g_chatScrollUpDown;   // comes from MenuHandler.cpp
 extern RotaryEncoderInterruptImpl1 *rotaryEncoderInterruptImpl1;
 extern graphics::Screen *screen;  // Global screen instance
 
+// Global variable for chat silent mode
+bool g_chatSilentMode = false;
+
 #if HAS_WIFI && !defined(ARCH_PORTDUINO)
 #include "mesh/wifi/WiFiAPClient.h"
 #endif
@@ -307,9 +310,22 @@ void resetScrollToTop(uint32_t nodeId, bool isDM) {
         const auto& dmHistory = chat::ChatHistoryStore::instance().getDM(nodeId);
         int totalMessages = (int)dmHistory.size();
         if (totalMessages > 0) {
-            // Reset to top (newest messages first)
-            st.scrollIndex = 0;  // Start at the beginning (newest messages)
-            st.sel = 0;          // Select first item (newest message)
+            // Buscar el primer mensaje no leído
+            int firstUnreadIdx = chat::ChatHistoryStore::instance().getFirstUnreadIndexDM(nodeId);
+            
+            if (firstUnreadIdx >= 0) {
+                // Posicionar en el primer mensaje no leído
+                // La lógica de display invierte el índice: itemIndex = total - 1 - (scrollIndex + row)
+                // Queremos que firstUnreadIdx aparezca en row=0, entonces:
+                // firstUnreadIdx = total - 1 - (scrollIndex + 0)
+                // scrollIndex = total - 1 - firstUnreadIdx
+                st.scrollIndex = totalMessages - 1 - firstUnreadIdx;
+                st.sel = 0;  // Seleccionar primera fila visible (que será el primer no leído)
+            } else {
+                // Si no hay mensajes no leídos, ir al más reciente
+                st.scrollIndex = 0;
+                st.sel = 0;
+            }
             st.offset = 0;       // Reset horizontal scroll too
             st.lastMs = millis();
         }
@@ -319,9 +335,18 @@ void resetScrollToTop(uint32_t nodeId, bool isDM) {
         const auto& chanHistory = chat::ChatHistoryStore::instance().getCHAN(ch);
         int totalMessages = (int)chanHistory.size();
         if (totalMessages > 0) {
-            // Reset to top (newest messages first)
-            st.scrollIndex = 0;  // Start at the beginning (newest messages)
-            st.sel = 0;          // Select first item (newest message)
+            // Buscar el primer mensaje no leído
+            int firstUnreadIdx = chat::ChatHistoryStore::instance().getFirstUnreadIndexCHAN(ch);
+            
+            if (firstUnreadIdx >= 0) {
+                // Posicionar en el primer mensaje no leído
+                st.scrollIndex = totalMessages - 1 - firstUnreadIdx;
+                st.sel = 0;  // Seleccionar primera fila visible (que será el primer no leído)
+            } else {
+                // Si no hay mensajes no leídos, ir al más reciente
+                st.scrollIndex = 0;
+                st.sel = 0;
+            }
             st.offset = 0;       // Reset horizontal scroll too
             st.lastMs = millis();
         }
@@ -407,11 +432,11 @@ void checkFrameChange() {
 // ===================== NODE =====================
 static void openChatActionsForNode(uint32_t nodeId)
 {
-    // Dynamic options (max 8 visible here)
-    enum { kPreset = 1, kFree = 2, kRemove = 3, kRemoveFav = 4, kInfo = 5, kScroll = 6, kScrollType = 7, kBack = 8 };
+    // Dynamic options (max 9 visible here)
+    enum { kPreset = 1, kFree = 2, kRemove = 3, kRemoveFav = 4, kMarkRead = 5, kInfo = 6, kScroll = 7, kScrollType = 8, kBack = 9 };
 
-    static const char* opts[8];
-    static int         enums[8];
+    static const char* opts[9];
+    static int         enums[9];
     int count = 0;
 
     // Preset / Freetext according to CardKB
@@ -432,6 +457,10 @@ static void openChatActionsForNode(uint32_t nodeId)
 
     opts[count]  = "Remove Fav";
     enums[count] = kRemoveFav;
+    count++;
+
+    opts[count]  = "Mark All Read";
+    enums[count] = kMarkRead;
     count++;
 
     opts[count]  = "Node Info";
@@ -497,6 +526,13 @@ static void openChatActionsForNode(uint32_t nodeId)
             if (screen) screen->setFrames(Screen::FOCUS_PRESERVE);
             break;
 
+        case kMarkRead:
+            // Marcar todos los mensajes DM como leídos
+            chat::ChatHistoryStore::instance().markAsReadDM(nodeId);
+            if (screen) screen->showSimpleBanner("All marked as read", 1200);
+            if (screen) screen->setFrames(Screen::FOCUS_PRESERVE);
+            break;
+
         case kInfo:
             if (screen) {
                 graphics::UIRenderer::currentFavoriteNodeNum = nodeId;
@@ -528,10 +564,10 @@ static void openChatActionsForNode(uint32_t nodeId)
 // ===================== CHANNEL =====================
 static void openChatActionsForChannel(uint8_t ch)
 {
-    enum { kPreset = 1, kFree = 2, kRemove = 3, kScroll = 4, kScrollType = 5, kBack = 6 };
+    enum { kPreset = 1, kFree = 2, kRemove = 3, kMarkRead = 4, kScroll = 5, kScrollType = 6, kBack = 7 };
 
-    static const char* opts[6];
-    static int         enums[6];
+    static const char* opts[7];
+    static int         enums[7];
     int count = 0;
 
     // Preset / Freetext according to CardKB
@@ -548,6 +584,10 @@ static void openChatActionsForChannel(uint8_t ch)
     // Common
     opts[count]  = "Remove Chat";
     enums[count] = kRemove;
+    count++;
+
+    opts[count]  = "Mark All Read";
+    enums[count] = kMarkRead;
     count++;
 
     // Scroll Btn only if there is NO CardKB and NO rotary encoder
@@ -617,6 +657,12 @@ static void openChatActionsForChannel(uint8_t ch)
                 std::string filename = "/chat_ch_" + std::to_string(ch) + ".txt";
                 FSCom.remove(filename.c_str());
             }
+            if (screen) screen->setFrames(Screen::FOCUS_PRESERVE);
+            break;
+        case kMarkRead:
+            // Marcar todos los mensajes del canal como leídos
+            chat::ChatHistoryStore::instance().markAsReadCHAN(ch);
+            if (screen) screen->showSimpleBanner("All marked as read", 1200);
             if (screen) screen->setFrames(Screen::FOCUS_PRESERVE);
             break;
         case kScroll:
@@ -742,7 +788,19 @@ static void drawFavNodeChatFrame(OLEDDisplay *display, OLEDDisplayUiState *state
         if (itemIndex < 0) break;
         const auto &e = q[itemIndex];
         std::string who = e.outgoing ? "S" : "R";
-        std::string base = who + ": " + e.text;
+
+        // Agregar asterisco para mensajes no leídos (solo cuando no hay marquee activo)
+        std::string unreadIndicator = "";
+        if (e.unread && !e.outgoing && row != st.sel) {
+            unreadIndicator = "*";
+        }
+        
+        // Marcar mensaje como leído cuando está seleccionado (marquee activo)
+        if (row == st.sel && e.unread && !e.outgoing) {
+            chat::ChatHistoryStore::instance().markMessageAsRead(nodeId, itemIndex);
+        }
+        
+        std::string base = unreadIndicator + who + ": " + e.text;
         
         // Check if this message needs extra height
         bool needsExtra = needsExtraHeight(base);
@@ -860,7 +918,19 @@ static void drawChannelChatTabFrame(OLEDDisplay *display, OLEDDisplayUiState *st
             else if (e.node) { char buf[9]; std::snprintf(buf, sizeof(buf), "%08X", (unsigned)e.node); who = buf; }
             else who = "??";
         }
-        std::string base = who + ": " + e.text;
+        
+        // Agregar asterisco para mensajes no leídos (solo cuando no hay marquee activo)
+        std::string unreadIndicator = "";
+        if (e.unread && !e.outgoing && row != st.sel) {
+            unreadIndicator = "*";
+        }
+        
+        // Marcar mensaje como leído cuando está seleccionado (marquee activo)
+        if (row == st.sel && e.unread && !e.outgoing) {
+            chat::ChatHistoryStore::instance().markChannelMessageAsRead(ch, itemIndex);
+        }
+        
+        std::string base = unreadIndicator + who + ": " + e.text;
         
         // Check if this message needs extra height
         bool needsExtra = needsExtraHeight(base);
@@ -2853,10 +2923,17 @@ bool shouldWakeOnReceivedMessage()
 {
     /*
     The goal here is to determine when we do NOT wake up the screen on message received:
+    - Chat silent mode is enabled
     - Any ext. notifications are turned on
     - If role is not CLIENT / CLIENT_MUTE / CLIENT_HIDDEN / CLIENT_BASE
     - If the battery level is very low
     */
+    
+    // Check silent mode first
+    if (g_chatSilentMode) {
+        return false;
+    }
+    
     if (moduleConfig.external_notification.enabled) {
         return false;
     }

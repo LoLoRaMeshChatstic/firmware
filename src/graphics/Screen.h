@@ -28,6 +28,9 @@ struct BannerOverlayOptions {
 
 bool shouldWakeOnReceivedMessage();
 
+// Global variable for chat silent mode
+extern bool g_chatSilentMode;
+
 #if !HAS_SCREEN
 #include "power.h"
 namespace graphics

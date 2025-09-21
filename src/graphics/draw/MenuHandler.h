@@ -35,11 +35,18 @@ class menuHandler
         wifi_toggle_menu,
         wifi_config_menu,
         wifi_password_prompt,
+        mqtt_base_menu,
+        mqtt_toggle_menu,
+        mqtt_server_prompt,
+        mqtt_username_prompt,
+        mqtt_password_prompt,
+        mqtt_root_prompt,
         bluetooth_toggle_menu,
         notifications_menu,
         screen_options_menu,
         power_menu,
         system_base_menu,
+        silent_mode_toggle,
         key_verification_init,
         key_verification_final_prompt,
         trace_route_menu,
@@ -84,10 +91,13 @@ class menuHandler
     static void wifiBaseMenu();
     static void wifiToggleMenu();
     static void wifiConfigMenu();
+    static void mqttBaseMenu();
+    static void mqttToggleMenu();
     static void notificationsMenu();
     static void screenOptionsMenu();
     static void powerMenu();
     static void FrameToggles_menu();
+    static void silentModeToggle();
 
   private:
     static void saveUIConfig();

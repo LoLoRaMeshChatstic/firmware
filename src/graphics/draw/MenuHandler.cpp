@@ -34,6 +34,9 @@
 
 extern CannedMessageModule *cannedMessageModule;
 
+// External variables for chat functionality
+extern bool g_chatSilentMode;
+
 // Toggle global scroll for chat frames
 bool g_chatScrollByPress = false;
 bool g_chatScrollUpDown = true;  // true = Up, false = Down
@@ -56,12 +59,12 @@ static String s_wifiPendingSSID;
 void menuHandler::loraMenu()
 {
 #if HAS_WIFI && !defined(ARCH_PORTDUINO)
-    static const char *optionsArray[] = {"Back", "Region Picker", "Device Role", "WiFi Config"};
-    enum optionsNumbers { Back = 0, lora_picker = 1, device_role_picker = 2, wifi_config = 3 };
+    static const char *optionsArray[] = {"Back", "Region Picker", "Device Role", "WiFi Config", "MQTT Config"};
+    enum optionsNumbers { Back = 0, lora_picker = 1, device_role_picker = 2, wifi_config = 3, mqtt_config = 4 };
     BannerOverlayOptions bannerOptions;
     bannerOptions.message = "LoRa Actions";
     bannerOptions.optionsArrayPtr = optionsArray;
-    bannerOptions.optionsCount = 4;
+    bannerOptions.optionsCount = 5;
     bannerOptions.bannerCallback = [](int selected) -> void {
         if (selected == Back) {
             // No action
@@ -81,6 +84,10 @@ void menuHandler::loraMenu()
             menuHandler::menuQueue           = menuHandler::wifi_config_menu;
             if (screen) screen->forceDisplay(true);
             return;
+        }
+        else if (selected == mqtt_config) {
+            menuQueue = mqtt_base_menu;
+            screen->runNow();
         }
 #endif
     };
@@ -526,10 +533,14 @@ void menuHandler::textMessageBaseMenu()
 
 void menuHandler::systemBaseMenu()
 {
-    enum optionsNumbers { Back, Notifications, ScreenOptions, Bluetooth, PowerMenu, FrameToggles, Test, enumEnd };
+    enum optionsNumbers { Back, SilentMode, Notifications, ScreenOptions, Bluetooth, PowerMenu, FrameToggles, Test, enumEnd };
     static const char *optionsArray[enumEnd] = {"Back"};
     static int optionsEnumArray[enumEnd] = {Back};
     int options = 1;
+
+    // Silent Mode for chats
+    optionsArray[options] = g_chatSilentMode ? "Silent Mode: ON" : "Silent Mode: OFF";
+    optionsEnumArray[options++] = SilentMode;
 
     optionsArray[options] = "Notifications";
     optionsEnumArray[options++] = Notifications;
@@ -559,7 +570,12 @@ void menuHandler::systemBaseMenu()
     bannerOptions.optionsCount = options;
     bannerOptions.optionsEnumPtr = optionsEnumArray;
     bannerOptions.bannerCallback = [](int selected) -> void {
-        if (selected == Notifications) {
+        if (selected == SilentMode) {
+            g_chatSilentMode = !g_chatSilentMode;
+            // Refresh menu to show updated state
+            menuHandler::menuQueue = menuHandler::system_base_menu;
+            screen->runNow();
+        } else if (selected == Notifications) {
             menuHandler::menuQueue = menuHandler::notifications_menu;
             screen->runNow();
         } else if (selected == ScreenOptions) {
@@ -1575,6 +1591,9 @@ void menuHandler::handleMenuSwitch(OLEDDisplay *display)
     case system_base_menu:
         systemBaseMenu();
         break;
+    case silent_mode_toggle:
+        silentModeToggle();
+        break;
     case position_base_menu:
         positionBaseMenu();
         break;
@@ -1622,6 +1641,94 @@ void menuHandler::handleMenuSwitch(OLEDDisplay *display)
 #endif
         menuQueue = menu_none;
         return;
+    }
+    case mqtt_server_prompt: {
+        char hdr[32] = "MQTT Server:";
+        
+        auto serverCallback = [](const std::string &server) {
+            strlcpy(moduleConfig.mqtt.address, server.c_str(), sizeof(moduleConfig.mqtt.address));
+            nodeDB->saveProto("/prefs/moduleconfig.proto", meshtastic_ModuleConfig_size, &meshtastic_ModuleConfig_msg, &moduleConfig);
+            if (screen) screen->showSimpleBanner("Server Saved", 2000);
+        };
+
+        if (kb_found && cannedMessageModule) {
+            cannedMessageModule->LaunchFreetextKbPrompt(hdr, moduleConfig.mqtt.address, serverCallback);
+        } else {
+            #if !defined(ARCH_PORTDUINO) && !MESHTASTIC_EXCLUDE_I2C
+            if (!::cardKbI2cImpl) {
+                ::cardKbI2cImpl = new CardKbI2cImpl();
+                ::cardKbI2cImpl->init();
+            }
+            #endif
+            if (screen) screen->showSimpleBanner("CardKB Required", 2000);
+        }
+        break;
+    }
+    case mqtt_username_prompt: {
+        char hdr[32] = "MQTT Username:";
+        
+        auto usernameCallback = [](const std::string &username) {
+            strlcpy(moduleConfig.mqtt.username, username.c_str(), sizeof(moduleConfig.mqtt.username));
+            nodeDB->saveProto("/prefs/moduleconfig.proto", meshtastic_ModuleConfig_size, &meshtastic_ModuleConfig_msg, &moduleConfig);
+            if (screen) screen->showSimpleBanner("Username Saved", 2000);
+        };
+
+        if (kb_found && cannedMessageModule) {
+            cannedMessageModule->LaunchFreetextKbPrompt(hdr, moduleConfig.mqtt.username, usernameCallback);
+        } else {
+            #if !defined(ARCH_PORTDUINO) && !MESHTASTIC_EXCLUDE_I2C
+            if (!::cardKbI2cImpl) {
+                ::cardKbI2cImpl = new CardKbI2cImpl();
+                ::cardKbI2cImpl->init();
+            }
+            #endif
+            if (screen) screen->showSimpleBanner("CardKB Required", 2000);
+        }
+        break;
+    }
+    case mqtt_password_prompt: {
+        char hdr[32] = "MQTT Password:";
+        
+        auto passwordCallback = [](const std::string &password) {
+            strlcpy(moduleConfig.mqtt.password, password.c_str(), sizeof(moduleConfig.mqtt.password));
+            nodeDB->saveProto("/prefs/moduleconfig.proto", meshtastic_ModuleConfig_size, &meshtastic_ModuleConfig_msg, &moduleConfig);
+            if (screen) screen->showSimpleBanner("Password Saved", 2000);
+        };
+
+        if (kb_found && cannedMessageModule) {
+            cannedMessageModule->LaunchFreetextKbPrompt(hdr, "", passwordCallback);
+        } else {
+            #if !defined(ARCH_PORTDUINO) && !MESHTASTIC_EXCLUDE_I2C
+            if (!::cardKbI2cImpl) {
+                ::cardKbI2cImpl = new CardKbI2cImpl();
+                ::cardKbI2cImpl->init();
+            }
+            #endif
+            if (screen) screen->showSimpleBanner("CardKB Required", 2000);
+        }
+        break;
+    }
+    case mqtt_root_prompt: {
+        char hdr[32] = "MQTT Root Topic:";
+        
+        auto rootCallback = [](const std::string &root) {
+            strlcpy(moduleConfig.mqtt.root, root.c_str(), sizeof(moduleConfig.mqtt.root));
+            nodeDB->saveProto("/prefs/moduleconfig.proto", meshtastic_ModuleConfig_size, &meshtastic_ModuleConfig_msg, &moduleConfig);
+            if (screen) screen->showSimpleBanner("Root Topic Saved", 2000);
+        };
+
+        if (kb_found && cannedMessageModule) {
+            cannedMessageModule->LaunchFreetextKbPrompt(hdr, moduleConfig.mqtt.root, rootCallback);
+        } else {
+            #if !defined(ARCH_PORTDUINO) && !MESHTASTIC_EXCLUDE_I2C
+            if (!::cardKbI2cImpl) {
+                ::cardKbI2cImpl = new CardKbI2cImpl();
+                ::cardKbI2cImpl->init();
+            }
+            #endif
+            if (screen) screen->showSimpleBanner("CardKB Required", 2000);
+        }
+        break;
     }
  #if !MESHTASTIC_EXCL
 #if !MESHTASTIC_EXCLUDE_GPS
@@ -1674,6 +1781,12 @@ void menuHandler::handleMenuSwitch(OLEDDisplay *display)
     case wifi_toggle_menu:
         wifiToggleMenu();
         break;
+    case mqtt_base_menu:
+        mqttBaseMenu();
+        break;
+    case mqtt_toggle_menu:
+        mqttToggleMenu();
+        break;
     case key_verification_init:
         keyVerificationInitMenu();
         break;
@@ -1702,9 +1815,123 @@ void menuHandler::handleMenuSwitch(OLEDDisplay *display)
     menuQueue = menu_none;
 }
 
+void menuHandler::mqttBaseMenu()
+{
+    enum optionsNumbers { Back, Toggle, ServerConfig, Credentials, Advanced };
+
+    static const char *optionsArray[] = {"Back", "MQTT Toggle", "Server Config", "Credentials", "Advanced"};
+    BannerOverlayOptions bannerOptions;
+    bannerOptions.message = "MQTT Menu";
+    bannerOptions.optionsArrayPtr = optionsArray;
+    bannerOptions.optionsCount = 5;
+    bannerOptions.bannerCallback = [](int selected) -> void {
+        if (selected == Toggle) {
+            menuQueue = mqtt_toggle_menu;
+            screen->runNow();
+        } else if (selected == ServerConfig) {
+            // Server config submenu - mostrar opciones de servidor
+            enum serverOpts { SBack, Server, Port, TLS, Encryption };
+            static const char *serverOptsArray[] = {"Back", "Server Address", "TLS Enable", "Encryption"};
+            BannerOverlayOptions serverBanner;
+            serverBanner.message = "Server Config";
+            serverBanner.optionsArrayPtr = serverOptsArray;
+            serverBanner.optionsCount = 4;
+            serverBanner.bannerCallback = [](int sel) -> void {
+                if (sel == Server) {
+                    // Prompt para server address
+                    menuQueue = mqtt_server_prompt;
+                    screen->runNow();
+                } else if (sel == TLS) {
+                    // Toggle TLS
+                    moduleConfig.mqtt.tls_enabled = !moduleConfig.mqtt.tls_enabled;
+                    nodeDB->saveProto("/prefs/moduleconfig.proto", meshtastic_ModuleConfig_size, &meshtastic_ModuleConfig_msg, &moduleConfig);
+                    screen->showSimpleBanner(moduleConfig.mqtt.tls_enabled ? "TLS Enabled" : "TLS Disabled", 2000);
+                } else if (sel == Encryption) {
+                    // Toggle Encryption
+                    moduleConfig.mqtt.encryption_enabled = !moduleConfig.mqtt.encryption_enabled;
+                    nodeDB->saveProto("/prefs/moduleconfig.proto", meshtastic_ModuleConfig_size, &meshtastic_ModuleConfig_msg, &moduleConfig);
+                    screen->showSimpleBanner(moduleConfig.mqtt.encryption_enabled ? "Encryption On" : "Encryption Off", 2000);
+                }
+            };
+            screen->showOverlayBanner(serverBanner);
+        } else if (selected == Credentials) {
+            // Credentials submenu
+            enum credOpts { CBack, Username, Password, Root };
+            static const char *credOptsArray[] = {"Back", "Username", "Password", "Root Topic"};
+            BannerOverlayOptions credBanner;
+            credBanner.message = "Credentials";
+            credBanner.optionsArrayPtr = credOptsArray;
+            credBanner.optionsCount = 4;
+            credBanner.bannerCallback = [](int sel) -> void {
+                if (sel == Username) {
+                    menuQueue = mqtt_username_prompt;
+                    screen->runNow();
+                } else if (sel == Password) {
+                    menuQueue = mqtt_password_prompt;
+                    screen->runNow();
+                } else if (sel == Root) {
+                    menuQueue = mqtt_root_prompt;
+                    screen->runNow();
+                }
+            };
+            screen->showOverlayBanner(credBanner);
+        } else if (selected == Advanced) {
+            // Advanced options submenu
+            enum advOpts { ABack, JSON, MapReport, ProxyClient };
+            static const char *advOptsArray[] = {"Back", "JSON Output", "Map Reporting", "Proxy to Client"};
+            BannerOverlayOptions advBanner;
+            advBanner.message = "Advanced";
+            advBanner.optionsArrayPtr = advOptsArray;
+            advBanner.optionsCount = 4;
+            advBanner.bannerCallback = [](int sel) -> void {
+                if (sel == JSON) {
+                    moduleConfig.mqtt.json_enabled = !moduleConfig.mqtt.json_enabled;
+                    nodeDB->saveProto("/prefs/moduleconfig.proto", meshtastic_ModuleConfig_size, &meshtastic_ModuleConfig_msg, &moduleConfig);
+                    screen->showSimpleBanner(moduleConfig.mqtt.json_enabled ? "JSON Enabled" : "JSON Disabled", 2000);
+                } else if (sel == MapReport) {
+                    moduleConfig.mqtt.map_reporting_enabled = !moduleConfig.mqtt.map_reporting_enabled;
+                    nodeDB->saveProto("/prefs/moduleconfig.proto", meshtastic_ModuleConfig_size, &meshtastic_ModuleConfig_msg, &moduleConfig);
+                    screen->showSimpleBanner(moduleConfig.mqtt.map_reporting_enabled ? "Map Reporting On" : "Map Reporting Off", 2000);
+                } else if (sel == ProxyClient) {
+                    moduleConfig.mqtt.proxy_to_client_enabled = !moduleConfig.mqtt.proxy_to_client_enabled;
+                    nodeDB->saveProto("/prefs/moduleconfig.proto", meshtastic_ModuleConfig_size, &meshtastic_ModuleConfig_msg, &moduleConfig);
+                    screen->showSimpleBanner(moduleConfig.mqtt.proxy_to_client_enabled ? "Proxy Enabled" : "Proxy Disabled", 2000);
+                }
+            };
+            screen->showOverlayBanner(advBanner);
+        }
+    };
+    screen->showOverlayBanner(bannerOptions);
+}
+
+void menuHandler::mqttToggleMenu()
+{
+    bool currentState = moduleConfig.mqtt.enabled;
+    
+    showConfirmationBanner(
+        currentState ? "Disable MQTT?" : "Enable MQTT?",
+        [currentState]() -> void {
+            moduleConfig.mqtt.enabled = !currentState;
+            nodeDB->saveProto("/prefs/moduleconfig.proto", meshtastic_ModuleConfig_size, &meshtastic_ModuleConfig_msg, &moduleConfig);
+            screen->showSimpleBanner(!currentState ? "MQTT Enabled" : "MQTT Disabled", 2000);
+        }
+    );
+}
+
 void menuHandler::saveUIConfig()
 {
     nodeDB->saveProto("/prefs/uiconfig.proto", meshtastic_DeviceUIConfig_size, &meshtastic_DeviceUIConfig_msg, &uiconfig);
+}
+
+void menuHandler::silentModeToggle()
+{
+    showConfirmationBanner(
+        g_chatSilentMode ? "Disable Silent Mode?" : "Enable Silent Mode?",
+        []() -> void {
+            g_chatSilentMode = !g_chatSilentMode;
+            screen->showSimpleBanner(g_chatSilentMode ? "Silent Mode ON" : "Silent Mode OFF", 2000);
+        }
+    );
 }
 
 } // namespace graphics

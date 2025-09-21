@@ -16,6 +16,7 @@ struct ChatEntry {
   uint32_t ts{0};           // epoch segundos
   bool     outgoing{false}; // true si lo enviaste desde este nodo
   bool     isChannel{false}; // true=canal, false=DM por nodo
+  bool     unread{false};   // true si el mensaje no ha sido leído
   uint32_t node{0};         // DM: peer; Canal: nodeId del remitente (0 si no disponible)
   uint8_t  channel{0};      // válido si isChannel==true
   std::string text;         // UTF-8 renderizable en OLED
@@ -30,8 +31,8 @@ public:
   static ChatHistoryStore& instance();
 
   // Añadir mensajes
-  void addDM(uint32_t peer, bool outgoing, const std::string& text, uint32_t ts);
-  void addCHAN(uint8_t channel, uint32_t fromNode, bool outgoing, const std::string& text, uint32_t ts);
+  void addDM(uint32_t peer, bool outgoing, const std::string& text, uint32_t ts, bool unread = true);
+  void addCHAN(uint8_t channel, uint32_t fromNode, bool outgoing, const std::string& text, uint32_t ts, bool unread = true);
 
   // Acceso de sólo lectura al historial (devuelven un deque estable; vacío si no existe)
   const std::deque<ChatEntry>& getDM(uint32_t peer) const;
@@ -46,6 +47,20 @@ public:
   // Nuevos métodos para eliminar historial completo (RAM + persistente) pero mantener canal/frame
   void clearChatHistoryDM(uint32_t peer);        // Elimina solo historial DM, mantiene el peer
   void clearChatHistoryChannel(uint8_t channel); // Elimina solo historial canal, mantiene canal/frame
+
+  // Gestión de mensajes no leídos
+  int getUnreadCountDM(uint32_t peer) const;     // Cuenta mensajes no leídos de un DM específico
+  int getUnreadCountCHAN(uint8_t channel) const; // Cuenta mensajes no leídos de un canal específico
+  int getTotalUnreadCount() const;               // Cuenta total de mensajes no leídos
+  void markAsReadDM(uint32_t peer);              // Marca todos los mensajes DM como leídos
+  void markAsReadCHAN(uint8_t channel);          // Marca todos los mensajes del canal como leídos
+  void markAllAsRead();                          // Marca todos los mensajes como leídos
+  void markMessageAsRead(uint32_t peer, int messageIndex); // Marca mensaje específico DM como leído
+  void markChannelMessageAsRead(uint8_t channel, int messageIndex); // Marca mensaje específico del canal como leído
+  
+  // Funciones para posicionar marquee en primer mensaje no leído
+  int getFirstUnreadIndexDM(uint32_t peer) const;       // Retorna índice del primer mensaje no leído en DM (-1 si todos leídos)
+  int getFirstUnreadIndexCHAN(uint8_t channel) const;   // Retorna índice del primer mensaje no leído en canal (-1 si todos leídos)
 
   // Listados
   std::vector<uint32_t> listDMPeers() const;

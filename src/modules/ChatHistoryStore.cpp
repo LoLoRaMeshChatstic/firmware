@@ -10,8 +10,8 @@ static const std::deque<ChatEntry> kEmptyDeque;
 
 // --- Serialización CSV simple ---
 std::string ChatEntry::serialize(const ChatEntry& e) {
-  char buf[32];
-  snprintf(buf, sizeof(buf), "%u,%d,%d,%u,%u,", e.ts, e.outgoing, e.isChannel, e.node, e.channel);
+  char buf[64];
+  snprintf(buf, sizeof(buf), "%u,%d,%d,%d,%u,%u,", e.ts, e.outgoing, e.isChannel, e.unread, e.node, e.channel);
   std::string s(buf);
   // Escapar comas en el texto si es necesario (simple)
   for (char c : e.text) {
@@ -32,6 +32,8 @@ ChatEntry ChatEntry::deserialize(const std::string& line) {
     e.outgoing = std::stoi(item);
     if (!std::getline(ss, item, ',')) return e;
     e.isChannel = std::stoi(item);
+    if (!std::getline(ss, item, ',')) return e;
+    e.unread = std::stoi(item);
     if (!std::getline(ss, item, ',')) return e;
     e.node = std::stoul(item);
     if (!std::getline(ss, item, ',')) return e;
@@ -77,11 +79,12 @@ void ChatHistoryStore::pushBounded(std::deque<ChatEntry>& q, ChatEntry e) {
   while (q.size() > kMaxPerGroup) q.pop_front();
 }
 
-void ChatHistoryStore::addDM(uint32_t peer, bool outgoing, const std::string& text, uint32_t ts) {
+void ChatHistoryStore::addDM(uint32_t peer, bool outgoing, const std::string& text, uint32_t ts, bool unread) {
   ChatEntry e;
   e.ts       = ts;
   e.outgoing = outgoing;
   e.isChannel = false;
+  e.unread   = unread && !outgoing; // Solo los mensajes entrantes pueden ser no leídos
   e.node     = peer;     // peer of the conversation
   e.channel  = 0;
   e.text     = text;
@@ -89,11 +92,12 @@ void ChatHistoryStore::addDM(uint32_t peer, bool outgoing, const std::string& te
   saveDM(peer);
 }
 
-void ChatHistoryStore::addCHAN(uint8_t channel, uint32_t fromNode, bool outgoing, const std::string& text, uint32_t ts) {
+void ChatHistoryStore::addCHAN(uint8_t channel, uint32_t fromNode, bool outgoing, const std::string& text, uint32_t ts, bool unread) {
   ChatEntry e;
   e.ts       = ts;
   e.outgoing = outgoing;
   e.isChannel = true;
+  e.unread   = unread && !outgoing; // Solo los mensajes entrantes pueden ser no leídos
   e.node     = fromNode;   // sender (for alias display); 0 if it's us and doesn't matter
   e.channel  = channel;
   e.text     = text;
@@ -263,6 +267,157 @@ std::vector<uint8_t> ChatHistoryStore::listChannels() const {
   for (auto& kv : ch_) v.push_back(kv.first); // Collect all channel indices
   std::sort(v.begin(), v.end());
   return v;
+}
+
+// --- Gestión de mensajes no leídos ---
+int ChatHistoryStore::getUnreadCountDM(uint32_t peer) const {
+  auto it = dm_.find(peer);
+  if (it == dm_.end()) return 0;
+  
+  int count = 0;
+  for (const auto& entry : it->second) {
+    if (entry.unread && !entry.outgoing) count++;
+  }
+  return count;
+}
+
+int ChatHistoryStore::getUnreadCountCHAN(uint8_t channel) const {
+  auto it = ch_.find(channel);
+  if (it == ch_.end()) return 0;
+  
+  int count = 0;
+  for (const auto& entry : it->second) {
+    if (entry.unread && !entry.outgoing) count++;
+  }
+  return count;
+}
+
+int ChatHistoryStore::getTotalUnreadCount() const {
+  int total = 0;
+  
+  // Contar DMs no leídos
+  for (const auto& kv : dm_) {
+    for (const auto& entry : kv.second) {
+      if (entry.unread && !entry.outgoing) total++;
+    }
+  }
+  
+  // Contar canales no leídos
+  for (const auto& kv : ch_) {
+    for (const auto& entry : kv.second) {
+      if (entry.unread && !entry.outgoing) total++;
+    }
+  }
+  
+  return total;
+}
+
+void ChatHistoryStore::markAsReadDM(uint32_t peer) {
+  auto it = dm_.find(peer);
+  if (it == dm_.end()) return;
+  
+  bool changed = false;
+  for (auto& entry : it->second) {
+    if (entry.unread) {
+      entry.unread = false;
+      changed = true;
+    }
+  }
+  
+  if (changed) saveDM(peer);
+}
+
+void ChatHistoryStore::markAsReadCHAN(uint8_t channel) {
+  auto it = ch_.find(channel);
+  if (it == ch_.end()) return;
+  
+  bool changed = false;
+  for (auto& entry : it->second) {
+    if (entry.unread) {
+      entry.unread = false;
+      changed = true;
+    }
+  }
+  
+  if (changed) saveCHAN(channel);
+}
+
+void ChatHistoryStore::markAllAsRead() {
+  // Marcar todos los DMs como leídos
+  for (auto& kv : dm_) {
+    bool changed = false;
+    for (auto& entry : kv.second) {
+      if (entry.unread) {
+        entry.unread = false;
+        changed = true;
+      }
+    }
+    if (changed) saveDM(kv.first);
+  }
+  
+  // Marcar todos los canales como leídos
+  for (auto& kv : ch_) {
+    bool changed = false;
+    for (auto& entry : kv.second) {
+      if (entry.unread) {
+        entry.unread = false;
+        changed = true;
+      }
+    }
+    if (changed) saveCHAN(kv.first);
+  }
+}
+
+void ChatHistoryStore::markMessageAsRead(uint32_t peer, int messageIndex) {
+  auto it = dm_.find(peer);
+  if (it == dm_.end()) return;
+  
+  if (messageIndex >= 0 && messageIndex < (int)it->second.size()) {
+    if (it->second[messageIndex].unread) {
+      it->second[messageIndex].unread = false;
+      saveDM(peer);
+    }
+  }
+}
+
+void ChatHistoryStore::markChannelMessageAsRead(uint8_t channel, int messageIndex) {
+  auto it = ch_.find(channel);
+  if (it == ch_.end()) return;
+  
+  if (messageIndex >= 0 && messageIndex < (int)it->second.size()) {
+    if (it->second[messageIndex].unread) {
+      it->second[messageIndex].unread = false;
+      saveCHAN(channel);
+    }
+  }
+}
+
+int ChatHistoryStore::getFirstUnreadIndexDM(uint32_t peer) const {
+  auto it = dm_.find(peer);
+  if (it == dm_.end()) return -1;
+  
+  // Buscar el primer mensaje no leído desde el más antiguo (final del deque)
+  const auto& history = it->second;
+  for (int i = (int)history.size() - 1; i >= 0; --i) {
+    if (history[i].unread && !history[i].outgoing) {
+      return i;
+    }
+  }
+  return -1; // Todos los mensajes están leídos
+}
+
+int ChatHistoryStore::getFirstUnreadIndexCHAN(uint8_t channel) const {
+  auto it = ch_.find(channel);
+  if (it == ch_.end()) return -1;
+  
+  // Buscar el primer mensaje no leído desde el más antiguo (final del deque) 
+  const auto& history = it->second;
+  for (int i = (int)history.size() - 1; i >= 0; --i) {
+    if (history[i].unread && !history[i].outgoing) {
+      return i;
+    }
+  }
+  return -1; // Todos los mensajes están leídos
 }
 
 } // namespace chat
