@@ -39,7 +39,7 @@ extern bool g_chatSilentMode;
 
 // Toggle global scroll for chat frames
 bool g_chatScrollByPress = false;
-bool g_chatScrollUpDown = true;  // true = Up, false = Down
+bool g_chatScrollUpDown = false;  // true = Up, false = Down
 
 extern uint16_t TFT_MESH;
 
@@ -47,7 +47,7 @@ namespace graphics
 {
 // --- Scroll chat for short press (non-persistent) ---
 bool g_chatScrollByPress = false;
-bool g_chatScrollUpDown = true;  // true = Up, false = Down
+bool g_chatScrollUpDown = false;  // true = Up, false = Down
 
 menuHandler::screenMenus menuHandler::menuQueue = menu_none;
 bool test_enabled = false;
