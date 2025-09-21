@@ -314,16 +314,14 @@ void resetScrollToTop(uint32_t nodeId, bool isDM) {
             int lastReadIdx = chat::ChatHistoryStore::instance().getLastReadIndexDM(nodeId);
             
             if (lastReadIdx >= 0) {
-                // Posicionar en el último mensaje leído como primera línea
-                // La lógica de display: itemIndex = total - 1 - (scrollIndex + row)
-                // Queremos que lastReadIdx aparezca en row=0, entonces:
-                // lastReadIdx = total - 1 - (scrollIndex + 0)
-                // scrollIndex = total - 1 - lastReadIdx
+                // Posicionar el último mensaje leído en la primera línea (row 0)
+                // itemIndex = total - 1 - (scrollIndex + row), queremos lastReadIdx en row 0
+                // entonces: lastReadIdx = total - 1 - (scrollIndex + 0) => scrollIndex = total - 1 - lastReadIdx
                 st.scrollIndex = totalMessages - 1 - lastReadIdx;
-                st.sel = 0;  // No seleccionar nada inicialmente
+                st.sel = 0;  // Marquee en la primera línea (último leído)
             } else {
-                // Si no hay mensajes leídos, ir al más antiguo
-                st.scrollIndex = totalMessages - 1;
+                // Si no hay mensajes leídos, ir al más nuevo (primera línea)
+                st.scrollIndex = 0;
                 st.sel = 0;
             }
             st.offset = 0;       // Reset horizontal scroll too
@@ -339,12 +337,14 @@ void resetScrollToTop(uint32_t nodeId, bool isDM) {
             int lastReadIdx = chat::ChatHistoryStore::instance().getLastReadIndexCHAN(ch);
             
             if (lastReadIdx >= 0) {
-                // Posicionar en el último mensaje leído como primera línea
+                // Posicionar el último mensaje leído en la primera línea (row 0)
+                // itemIndex = total - 1 - (scrollIndex + row), queremos lastReadIdx en row 0
+                // entonces: lastReadIdx = total - 1 - (scrollIndex + 0) => scrollIndex = total - 1 - lastReadIdx
                 st.scrollIndex = totalMessages - 1 - lastReadIdx;
-                st.sel = 0;  // No seleccionar nada inicialmente
+                st.sel = 0;  // Marquee en la primera línea (último leído)
             } else {
-                // Si no hay mensajes leídos, ir al más antiguo
-                st.scrollIndex = totalMessages - 1;
+                // Si no hay mensajes leídos, ir al más nuevo (primera línea)
+                st.scrollIndex = 0;
                 st.sel = 0;
             }
             st.offset = 0;       // Reset horizontal scroll too
@@ -757,9 +757,19 @@ static void drawFavNodeChatFrame(OLEDDisplay *display, OLEDDisplayUiState *state
     }
     String age = (tsSel > 0) ? ageLabel(tsSel) : String("");
 
+    // Obtener contador de mensajes no leídos para este DM específico
+    int unreadCount = store.getUnreadCountDM(nodeId);
+
     char title[64];
-    if (alias)  std::snprintf(title, sizeof(title), "%s (%s)", alias, age.c_str());
-    else        std::snprintf(title, sizeof(title), "%08X (%s)", (unsigned)nodeId, age.c_str());
+    if (unreadCount > 0) {
+        // Mostrar contador de no leídos junto al título
+        if (alias)  std::snprintf(title, sizeof(title), "%s (%s) (%d)", alias, age.c_str(), unreadCount);
+        else        std::snprintf(title, sizeof(title), "%08X (%s) (%d)", (unsigned)nodeId, age.c_str(), unreadCount);
+    } else {
+        // Sin mensajes no leídos, mostrar título normal
+        if (alias)  std::snprintf(title, sizeof(title), "%s (%s)", alias, age.c_str());
+        else        std::snprintf(title, sizeof(title), "%08X (%s)", (unsigned)nodeId, age.c_str());
+    }
     display->drawString(x, y, title);
 
     const int lineH = 10;
@@ -880,9 +890,19 @@ static void drawChannelChatTabFrame(OLEDDisplay *display, OLEDDisplayUiState *st
     }
     String age = (tsSel > 0) ? ageLabel(tsSel) : String("");
 
+    // Obtener contador de mensajes no leídos para este canal específico
+    int unreadCount = store.getUnreadCountCHAN(ch);
+
     char title[64];
-    if (cname) std::snprintf(title, sizeof(title), "@%s (%s)", cname, age.c_str());
-    else       std::snprintf(title, sizeof(title), "@Channel %u (%s)", (unsigned)ch, age.c_str());
+    if (unreadCount > 0) {
+        // Mostrar contador de no leídos junto al título
+        if (cname) std::snprintf(title, sizeof(title), "@%s (%s) (%d)", cname, age.c_str(), unreadCount);
+        else       std::snprintf(title, sizeof(title), "@Channel %u (%s) (%d)", (unsigned)ch, age.c_str(), unreadCount);
+    } else {
+        // Sin mensajes no leídos, mostrar título normal
+        if (cname) std::snprintf(title, sizeof(title), "@%s (%s)", cname, age.c_str());
+        else       std::snprintf(title, sizeof(title), "@Channel %u (%s)", (unsigned)ch, age.c_str());
+    }
     display->drawString(x, y, title);
 
     const int lineH = 10;
@@ -2695,6 +2715,11 @@ int Screen::handleInputEvent(const InputEvent *event)
                         st.sel--;
                     } else if (st.scrollIndex > 0) {
                         st.scrollIndex--;
+                        // Recalculate visible rows after scroll
+                        int newVisibleRows = calculateVisibleRowsDM(nodeId, st.scrollIndex);
+                        if (st.sel >= newVisibleRows) {
+                            st.sel = newVisibleRows - 1;
+                        }
                     } else {
                         // wrap to bottom
                         st.scrollIndex = total - visibleRows;
@@ -2765,6 +2790,11 @@ int Screen::handleInputEvent(const InputEvent *event)
                         st.sel--;
                     } else if (st.scrollIndex > 0) {
                         st.scrollIndex--;
+                        // Recalculate visible rows after scroll
+                        int newVisibleRows = calculateVisibleRowsCH(ch, st.scrollIndex);
+                        if (st.sel >= newVisibleRows) {
+                            st.sel = newVisibleRows - 1;
+                        }
                     } else {
                         // wrap to bottom
                         st.scrollIndex = total - visibleRows;

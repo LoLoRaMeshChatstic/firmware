@@ -424,9 +424,10 @@ int ChatHistoryStore::getLastReadIndexDM(uint32_t peer) const {
   auto it = dm_.find(peer);
   if (it == dm_.end()) return -1;
   
-  // Buscar el último mensaje leído desde el más reciente (inicio del deque)
+  // Buscar el último mensaje leído desde el final del deque (más viejo) hacia el inicio (más nuevo)
+  // Para ser consistente con la lógica de display: itemIndex = total - 1 - (scrollIndex + row)
   const auto& history = it->second;
-  for (int i = 0; i < (int)history.size(); ++i) {
+  for (int i = (int)history.size() - 1; i >= 0; --i) {
     if (!history[i].unread) {
       return i;
     }
@@ -438,9 +439,10 @@ int ChatHistoryStore::getLastReadIndexCHAN(uint8_t channel) const {
   auto it = ch_.find(channel);
   if (it == ch_.end()) return -1;
   
-  // Buscar el último mensaje leído desde el más reciente (inicio del deque)
+  // Buscar el último mensaje leído desde el final del deque (más viejo) hacia el inicio (más nuevo)
+  // Para ser consistente con la lógica de display: itemIndex = total - 1 - (scrollIndex + row)
   const auto& history = it->second;
-  for (int i = 0; i < (int)history.size(); ++i) {
+  for (int i = (int)history.size() - 1; i >= 0; --i) {
     if (!history[i].unread) {
       return i;
     }
