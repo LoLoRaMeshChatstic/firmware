@@ -1648,7 +1648,7 @@ void menuHandler::handleMenuSwitch(OLEDDisplay *display)
         
         auto serverCallback = [](const std::string &server) {
             strlcpy(moduleConfig.mqtt.address, server.c_str(), sizeof(moduleConfig.mqtt.address));
-            nodeDB->saveProto("/prefs/moduleconfig.proto", meshtastic_ModuleConfig_size, &meshtastic_ModuleConfig_msg, &moduleConfig);
+            service->reloadConfig(SEGMENT_MODULECONFIG);
             if (screen) screen->showSimpleBanner("Server Saved", 2000);
         };
 
@@ -1671,7 +1671,7 @@ void menuHandler::handleMenuSwitch(OLEDDisplay *display)
         
         auto usernameCallback = [](const std::string &username) {
             strlcpy(moduleConfig.mqtt.username, username.c_str(), sizeof(moduleConfig.mqtt.username));
-            nodeDB->saveProto("/prefs/moduleconfig.proto", meshtastic_ModuleConfig_size, &meshtastic_ModuleConfig_msg, &moduleConfig);
+            service->reloadConfig(SEGMENT_MODULECONFIG);
             if (screen) screen->showSimpleBanner("Username Saved", 2000);
         };
 
@@ -1688,7 +1688,7 @@ void menuHandler::handleMenuSwitch(OLEDDisplay *display)
         
         auto passwordCallback = [](const std::string &password) {
             strlcpy(moduleConfig.mqtt.password, password.c_str(), sizeof(moduleConfig.mqtt.password));
-            nodeDB->saveProto("/prefs/moduleconfig.proto", meshtastic_ModuleConfig_size, &meshtastic_ModuleConfig_msg, &moduleConfig);
+            service->reloadConfig(SEGMENT_MODULECONFIG);
             if (screen) screen->showSimpleBanner("Password Saved", 2000);
         };
 
@@ -1705,7 +1705,7 @@ void menuHandler::handleMenuSwitch(OLEDDisplay *display)
         
         auto rootCallback = [](const std::string &root) {
             strlcpy(moduleConfig.mqtt.root, root.c_str(), sizeof(moduleConfig.mqtt.root));
-            nodeDB->saveProto("/prefs/moduleconfig.proto", meshtastic_ModuleConfig_size, &meshtastic_ModuleConfig_msg, &moduleConfig);
+            service->reloadConfig(SEGMENT_MODULECONFIG);
             if (screen) screen->showSimpleBanner("Root Topic Saved", 2000);
         };
 
@@ -1864,11 +1864,11 @@ void menuHandler::mqttServerConfig()
             screen->runNow();
         } else if (selected == TLS) {
             moduleConfig.mqtt.tls_enabled = !moduleConfig.mqtt.tls_enabled;
-            nodeDB->saveProto("/prefs/moduleconfig.proto", meshtastic_ModuleConfig_size, &meshtastic_ModuleConfig_msg, &moduleConfig);
+            service->reloadConfig(SEGMENT_MODULECONFIG);
             screen->showSimpleBanner(moduleConfig.mqtt.tls_enabled ? "TLS Enabled" : "TLS Disabled", 2000);
         } else if (selected == Encryption) {
             moduleConfig.mqtt.encryption_enabled = !moduleConfig.mqtt.encryption_enabled;
-            nodeDB->saveProto("/prefs/moduleconfig.proto", meshtastic_ModuleConfig_size, &meshtastic_ModuleConfig_msg, &moduleConfig);
+            service->reloadConfig(SEGMENT_MODULECONFIG);
             screen->showSimpleBanner(moduleConfig.mqtt.encryption_enabled ? "Encryption On" : "Encryption Off", 2000);
         }
     };
@@ -1907,7 +1907,7 @@ void menuHandler::mqttToggleMenu()
         currentState ? "Disable MQTT?" : "Enable MQTT?",
         [currentState]() -> void {
             moduleConfig.mqtt.enabled = !currentState;
-            nodeDB->saveProto("/prefs/moduleconfig.proto", meshtastic_ModuleConfig_size, &meshtastic_ModuleConfig_msg, &moduleConfig);
+            service->reloadConfig(SEGMENT_MODULECONFIG);
             screen->showSimpleBanner(!currentState ? "MQTT Enabled" : "MQTT Disabled", 2000);
         }
     );
