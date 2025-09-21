@@ -34,6 +34,8 @@ class UIRenderer
   public:
     //screen node info direct draw (no overlay, no focus handling)
     static void drawNodeInfoDirect(OLEDDisplay *display, const OLEDDisplayUiState *state, int16_t x, int16_t y);
+    //screen mqtt info direct draw (no overlay, no focus handling)
+    static void drawMqttInfoDirect(OLEDDisplay *display, const OLEDDisplayUiState *state, int16_t x, int16_t y);
     // Common UI elements
     static void drawNodes(OLEDDisplay *display, int16_t x, int16_t y, const meshtastic::NodeStatus *nodeStatus,
                           int node_offset = 0, bool show_total = true, String additional_words = "");
@@ -65,6 +67,7 @@ class UIRenderer
     static void drawCompassAndLocationScreen(OLEDDisplay *display, OLEDDisplayUiState *state, int16_t x, int16_t y);
 
     static NodeNum currentFavoriteNodeNum;
+    static bool showingMqttStatus; // Flag to track if MQTT status screen is showing
     static std::vector<meshtastic_NodeInfoLite *> favoritedNodes;
     static void rebuildFavoritedNodes();
 

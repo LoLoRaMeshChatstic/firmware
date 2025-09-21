@@ -1134,6 +1134,19 @@ void Screen::openNodeInfoFor(NodeNum nodeNum)
     ));
 }
 
+void Screen::openMqttInfoScreen()
+{
+    // Set flag to track MQTT status screen is showing
+    graphics::UIRenderer::showingMqttStatus = true;
+    
+    // Create a FrameCallback with the drawMqttInfoDirect function
+    setFrameImmediateDraw(new FrameCallback(
+        [](OLEDDisplay *d, OLEDDisplayUiState *s, int16_t x, int16_t y) {
+            graphics::UIRenderer::drawMqttInfoDirect(d, s, x, y);
+        }
+    ));
+}
+
 void Screen::showSimpleBanner(const char *message, uint32_t durationMs)
 {
     BannerOverlayOptions options;
@@ -2697,6 +2710,18 @@ int Screen::handleInputEvent(const InputEvent *event)
         graphics::UIRenderer::currentFavoriteNodeNum = 0;
         setFrames(FOCUS_PRESERVE);
         LOG_DEBUG("NodeInfo closed, returning to normal frames");
+        return 1; // Consumed
+    }
+
+    // === MQTT Status Input Handling ===
+    if (graphics::UIRenderer::showingMqttStatus) {
+        LOG_DEBUG("MQTT Status input - showingNormal=%d, event=%d, kbchar=%d", 
+                  showingNormalScreen, event->inputEvent, event->kbchar);
+        
+        // ANY key should close MQTT status and return to normal frames
+        graphics::UIRenderer::showingMqttStatus = false;
+        setFrames(FOCUS_PRESERVE);
+        LOG_DEBUG("MQTT Status closed, returning to normal frames");
         return 1; // Consumed
     }
 

@@ -1834,16 +1834,8 @@ void menuHandler::mqttBaseMenu()
             menuQueue = mqtt_credentials_config;
             screen->runNow();
         } else if (selected == Status) {
-            // Show current MQTT configuration status
-            char statusMsg[150];
-            if (moduleConfig.mqtt.enabled) {
-                snprintf(statusMsg, sizeof(statusMsg), "MQTT: ON\nServer: %s\nTLS: %s",
-                        moduleConfig.mqtt.address[0] ? moduleConfig.mqtt.address : "Not set",
-                        moduleConfig.mqtt.tls_enabled ? "ON" : "OFF");
-            } else {
-                snprintf(statusMsg, sizeof(statusMsg), "MQTT: DISABLED");
-            }
-            screen->showSimpleBanner(statusMsg, 4000);
+            // Show detailed MQTT status screen
+            screen->openMqttInfoScreen();
         }
     };
     screen->showOverlayBanner(bannerOptions);
