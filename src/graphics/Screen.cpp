@@ -262,11 +262,13 @@ static std::map<uint8_t , ScrollState> g_chanScroll; //  channel
 
 // Marquee auto-scroll control
 static uint32_t g_lastInteractionMs = 0;   // Last user interaction timestamp
-static const uint32_t MARQUEE_TIMEOUT_MS = 30000; // 30 seconds timeout
+static const uint32_t MARQUEE_TIMEOUT_MS = 40000; // 40 seconds timeout for home return
+static const uint32_t SCREEN_OFF_TIMEOUT_MS = 60000; // 60 seconds timeout for screen off
 static uint8_t g_previousFrame = 0xFF;     // Track frame changes for auto-scroll on enter
 
 // Forward declarations
 static void updateLastInteraction();
+void checkInactivityTimeouts();
 
 // Helpers (in case we ever treat channel as a "virtual node")
 static inline bool isVirtualChannelNode(uint32_t nodeId) { return (nodeId & 0xC0000000u) == 0xC0000000u; }
@@ -353,7 +355,7 @@ void resetScrollToTop(uint32_t nodeId, bool isDM) {
     }
 }
 
-void checkMarqueeTimeout() {
+void checkInactivityTimeouts() {
     if (!screen) return;  // Use global screen instance
 
     if (g_lastInteractionMs == 0) {
@@ -362,18 +364,35 @@ void checkMarqueeTimeout() {
     }
 
     uint32_t now = millis();
-    if (now - g_lastInteractionMs >= MARQUEE_TIMEOUT_MS) {
-        // 30 seconds without interaction - reset current chat to top
+    uint32_t inactiveTime = now - g_lastInteractionMs;
+    
+    // 60 seconds without interaction - turn off screen
+    if (inactiveTime >= SCREEN_OFF_TIMEOUT_MS) {
+        LOG_DEBUG("Screen timeout: turning off screen after %d seconds", SCREEN_OFF_TIMEOUT_MS/1000);
+        screen->setOn(false);
+        return; // Don't reset timer, let screen stay off
+    }
+    
+    // 40 seconds without interaction - return to home frame and reset scroll
+    if (inactiveTime >= MARQUEE_TIMEOUT_MS) {
         if (screen->getUI() && screen->isShowingNormalScreen()) {
             uint8_t currentFrame = screen->getUI()->getUiState()->currentFrame;
+            
+            // If not on home frame (frame 0), go to home
+            if (currentFrame != 0) {
+                LOG_DEBUG("Inactivity timeout: returning to home frame from frame %d", currentFrame);
+                screen->getUI()->switchToFrame(0);
+                screen->forceDisplay();
+            }
 
+            // Reset scroll positions for current chat if in a chat frame
             // Check if we're in a DM chat
             if (g_favChatFirst != (size_t)-1 && currentFrame >= g_favChatFirst && currentFrame <= g_favChatLast) {
                 size_t index = currentFrame - g_favChatFirst;
                 if (index < g_favChatNodes.size()) {
                     uint32_t nodeId = g_favChatNodes[index];
                     resetScrollToTop(nodeId, true);
-                    LOG_DEBUG("Marquee timeout: reset DM scroll for node %08x", nodeId);
+                    LOG_DEBUG("Inactivity timeout: reset DM scroll for node %08x", nodeId);
                 }
             }
             // Check if we're in a channel chat
@@ -382,7 +401,7 @@ void checkMarqueeTimeout() {
                 if (index < g_chanTabs.size()) {
                     uint8_t ch = g_chanTabs[index];
                     resetScrollToTop(ch, false);
-                    LOG_DEBUG("Marquee timeout: reset channel scroll for ch %d", ch);
+                    LOG_DEBUG("Inactivity timeout: reset channel scroll for ch %d", ch);
                 }
             }
         }
@@ -1814,8 +1833,8 @@ int32_t Screen::runOnce()
         // Check for frame changes to reset scroll when entering chat
         checkFrameChange();
 
-        // Check for marquee timeout (30 seconds without interaction)
-        checkMarqueeTimeout();
+        // Check for inactivity timeouts (40s home return, 60s screen off)
+        checkInactivityTimeouts();
 
         if (g_chatScrollActive) {
             if (targetFramerate == IDLE_FRAMERATE) {
