@@ -433,7 +433,7 @@ void checkFrameChange() {
 static void openChatActionsForNode(uint32_t nodeId)
 {
     // Dynamic options (max 9 visible here)
-    enum { kPreset = 1, kFree = 2, kRemove = 3, kRemoveFav = 4, kMarkRead = 5, kInfo = 6, kScroll = 7, kScrollType = 8, kBack = 9 };
+    enum { kPreset = 1, kFree = 2, kRemove = 3, kRemoveFav = 4, kDeleteNode = 5, kMarkRead = 6, kInfo = 7, kScroll = 8, kScrollType = 9, kBack = 10 };
 
     static const char* opts[9];
     static int         enums[9];
@@ -457,6 +457,10 @@ static void openChatActionsForNode(uint32_t nodeId)
 
     opts[count]  = "Remove Fav";
     enums[count] = kRemoveFav;
+    count++;
+
+    opts[count]  = "Delete Node";
+    enums[count] = kDeleteNode;
     count++;
 
     opts[count]  = "Mark All Read";
@@ -526,9 +530,28 @@ static void openChatActionsForNode(uint32_t nodeId)
             if (screen) screen->setFrames(Screen::FOCUS_PRESERVE);
             break;
 
+        case kDeleteNode:
+            // Eliminar completamente el nodo de la base de datos
+            if (nodeDB) {
+                nodeDB->removeNodeByNum(nodeId);
+                // También eliminar historial de chat
+                chat::ChatHistoryStore::instance().clearDM(nodeId);
+                // También eliminar archivo persistente de chat
+                std::string filename = "/chat_dm_" + std::to_string(nodeId) + ".txt";
+                FSCom.remove(filename.c_str());
+                if (screen) screen->showSimpleBanner("Node deleted", 1200);
+            }
+            if (screen) screen->setFrames(Screen::FOCUS_PRESERVE);
+            break;
+
         case kMarkRead:
             // Marcar todos los mensajes DM como leídos
             chat::ChatHistoryStore::instance().markAsReadDM(nodeId);
+            // Reset scroll to newest message
+            if (g_nodeScroll.find(nodeId) != g_nodeScroll.end()) {
+                g_nodeScroll[nodeId].scrollIndex = 0;
+                g_nodeScroll[nodeId].sel = 0;
+            }
             if (screen) screen->showSimpleBanner("All marked as read", 1200);
             if (screen) screen->setFrames(Screen::FOCUS_PRESERVE);
             break;
@@ -662,6 +685,11 @@ static void openChatActionsForChannel(uint8_t ch)
         case kMarkRead:
             // Marcar todos los mensajes del canal como leídos
             chat::ChatHistoryStore::instance().markAsReadCHAN(ch);
+            // Reset scroll to newest message
+            if (g_chanScroll.find(ch) != g_chanScroll.end()) {
+                g_chanScroll[ch].scrollIndex = 0;
+                g_chanScroll[ch].sel = 0;
+            }
             if (screen) screen->showSimpleBanner("All marked as read", 1200);
             if (screen) screen->setFrames(Screen::FOCUS_PRESERVE);
             break;
