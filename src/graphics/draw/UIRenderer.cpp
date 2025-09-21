@@ -24,7 +24,9 @@ extern graphics::Screen *screen;
 namespace graphics
 {
 NodeNum UIRenderer::currentFavoriteNodeNum = 0;
+#if HAS_WIFI && !defined(ARCH_PORTDUINO)
 bool UIRenderer::showingMqttStatus = false;
+#endif
 std::vector<meshtastic_NodeInfoLite *> graphics::UIRenderer::favoritedNodes;
 
 void graphics::UIRenderer::rebuildFavoritedNodes()
@@ -690,85 +692,6 @@ void UIRenderer::drawNodeInfoDirect(OLEDDisplay *display, const OLEDDisplayUiSta
             graphics::CompassRenderer::drawNodeHeading(display, compassX, compassY, compassRadius * 2, bearing);
             display->drawCircle(compassX, compassY, compassRadius);
         }
-    }
-}
-
-// Direct draw MQTT status info screen without overlay or focus handling
-void UIRenderer::drawMqttInfoDirect(OLEDDisplay *display, const OLEDDisplayUiState *state, int16_t x, int16_t y)
-{
-    display->clear();
-    display->setTextAlignment(TEXT_ALIGN_LEFT);
-    display->setFont(FONT_SMALL);
-    int line = 1;
-
-    // === Set Title
-    const char *titleStr = "MQTT Status";
-
-    // === Header ===
-    graphics::drawCommonHeader(display, x, y, titleStr);
-
-    // === MQTT Enable Status ===
-    char enabledStr[32];
-    if (moduleConfig.mqtt.enabled) {
-        snprintf(enabledStr, sizeof(enabledStr), "Status: ENABLED");
-    } else {
-        snprintf(enabledStr, sizeof(enabledStr), "Status: DISABLED");
-    }
-    int textWidth = display->getStringWidth(enabledStr);
-    int nameX = (SCREEN_WIDTH - textWidth) / 2;
-    display->drawString(nameX, graphics::getTextPositions(display)[line++], enabledStr);
-
-    if (moduleConfig.mqtt.enabled) {
-        // === Server Address ===
-        char serverStr[48];
-        if (moduleConfig.mqtt.address[0] != '\0') {
-            snprintf(serverStr, sizeof(serverStr), "Server: %s", moduleConfig.mqtt.address);
-        } else {
-            snprintf(serverStr, sizeof(serverStr), "Server: Not configured");
-        }
-        display->drawString(x, graphics::getTextPositions(display)[line++], serverStr);
-
-        // === Security Settings ===
-        char securityStr[32];
-        if (moduleConfig.mqtt.tls_enabled && moduleConfig.mqtt.encryption_enabled) {
-            snprintf(securityStr, sizeof(securityStr), "Security: TLS + Encryption");
-        } else if (moduleConfig.mqtt.tls_enabled) {
-            snprintf(securityStr, sizeof(securityStr), "Security: TLS Only");
-        } else if (moduleConfig.mqtt.encryption_enabled) {
-            snprintf(securityStr, sizeof(securityStr), "Security: Encryption Only");
-        } else {
-            snprintf(securityStr, sizeof(securityStr), "Security: None");
-        }
-        display->drawString(x, graphics::getTextPositions(display)[line++], securityStr);
-
-        // === Credentials ===
-        char credentialsStr[32];
-        bool hasUsername = moduleConfig.mqtt.username[0] != '\0';
-        bool hasPassword = moduleConfig.mqtt.password[0] != '\0';
-
-        if (hasUsername && hasPassword) {
-            snprintf(credentialsStr, sizeof(credentialsStr), "Auth: Username + Password");
-        } else if (hasUsername) {
-            snprintf(credentialsStr, sizeof(credentialsStr), "Auth: Username Only");
-        } else {
-            snprintf(credentialsStr, sizeof(credentialsStr), "Auth: Anonymous");
-        }
-        display->drawString(x, graphics::getTextPositions(display)[line++], credentialsStr);
-
-        // === Root Topic ===
-        char rootStr[32];
-        if (moduleConfig.mqtt.root[0] != '\0') {
-            snprintf(rootStr, sizeof(rootStr), "Root: %s", moduleConfig.mqtt.root);
-        } else {
-            snprintf(rootStr, sizeof(rootStr), "Root: Default");
-        }
-        display->drawString(x, graphics::getTextPositions(display)[line++], rootStr);
-    } else {
-        // Show message when MQTT is disabled
-        const char *disabledMsg = "MQTT is currently disabled";
-        textWidth = display->getStringWidth(disabledMsg);
-        nameX = (SCREEN_WIDTH - textWidth) / 2;
-        display->drawString(nameX, graphics::getTextPositions(display)[line + 1], disabledMsg);
     }
 }
 
@@ -1561,6 +1484,87 @@ std::string UIRenderer::drawTimeDelta(uint32_t days, uint32_t hours, uint32_t mi
         uptime = std::to_string(seconds) + "s";
     return uptime;
 }
+
+#if HAS_WIFI && !defined(ARCH_PORTDUINO)
+// Direct draw MQTT status info screen without overlay or focus handling
+void UIRenderer::drawMqttInfoDirect(OLEDDisplay *display, const OLEDDisplayUiState *state, int16_t x, int16_t y)
+{
+    display->clear();
+    display->setTextAlignment(TEXT_ALIGN_LEFT);
+    display->setFont(FONT_SMALL);
+    int line = 1;
+
+    // === Set Title
+    const char *titleStr = "MQTT Status";
+
+    // === Header ===
+    graphics::drawCommonHeader(display, x, y, titleStr);
+
+    // === MQTT Enable Status ===
+    char enabledStr[32];
+    if (moduleConfig.mqtt.enabled) {
+        snprintf(enabledStr, sizeof(enabledStr), "Status: ENABLED");
+    } else {
+        snprintf(enabledStr, sizeof(enabledStr), "Status: DISABLED");
+    }
+    int textWidth = display->getStringWidth(enabledStr);
+    int nameX = (SCREEN_WIDTH - textWidth) / 2;
+    display->drawString(nameX, graphics::getTextPositions(display)[line++], enabledStr);
+
+    if (moduleConfig.mqtt.enabled) {
+        // === Server Address ===
+        char serverStr[48];
+        if (moduleConfig.mqtt.address[0] != '\0') {
+            snprintf(serverStr, sizeof(serverStr), "Server: %s", moduleConfig.mqtt.address);
+        } else {
+            snprintf(serverStr, sizeof(serverStr), "Server: Not configured");
+        }
+        display->drawString(x, graphics::getTextPositions(display)[line++], serverStr);
+
+        // === Security Settings ===
+        char securityStr[32];
+        if (moduleConfig.mqtt.tls_enabled && moduleConfig.mqtt.encryption_enabled) {
+            snprintf(securityStr, sizeof(securityStr), "Security: TLS + Encryption");
+        } else if (moduleConfig.mqtt.tls_enabled) {
+            snprintf(securityStr, sizeof(securityStr), "Security: TLS Only");
+        } else if (moduleConfig.mqtt.encryption_enabled) {
+            snprintf(securityStr, sizeof(securityStr), "Security: Encryption Only");
+        } else {
+            snprintf(securityStr, sizeof(securityStr), "Security: None");
+        }
+        display->drawString(x, graphics::getTextPositions(display)[line++], securityStr);
+
+        // === Credentials ===
+        char credentialsStr[32];
+        bool hasUsername = moduleConfig.mqtt.username[0] != '\0';
+        bool hasPassword = moduleConfig.mqtt.password[0] != '\0';
+
+        if (hasUsername && hasPassword) {
+            snprintf(credentialsStr, sizeof(credentialsStr), "Auth: Username + Password");
+        } else if (hasUsername) {
+            snprintf(credentialsStr, sizeof(credentialsStr), "Auth: Username Only");
+        } else {
+            snprintf(credentialsStr, sizeof(credentialsStr), "Auth: Anonymous");
+        }
+        display->drawString(x, graphics::getTextPositions(display)[line++], credentialsStr);
+
+        // === Root Topic ===
+        char rootStr[32];
+        if (moduleConfig.mqtt.root[0] != '\0') {
+            snprintf(rootStr, sizeof(rootStr), "Root: %s", moduleConfig.mqtt.root);
+        } else {
+            snprintf(rootStr, sizeof(rootStr), "Root: Default");
+        }
+        display->drawString(x, graphics::getTextPositions(display)[line++], rootStr);
+    } else {
+        // Show message when MQTT is disabled
+        const char *disabledMsg = "MQTT is currently disabled";
+        textWidth = display->getStringWidth(disabledMsg);
+        nameX = (SCREEN_WIDTH - textWidth) / 2;
+        display->drawString(nameX, graphics::getTextPositions(display)[line + 1], disabledMsg);
+    }
+}
+#endif // HAS_WIFI && !defined(ARCH_PORTDUINO)
 
 } // namespace graphics
 

@@ -7,6 +7,7 @@
 #include "graphics/Screen.h"
 #include "modules/ChatHistoryStore.h" //for chat history
 #include <string>
+#include <ctime>
 
 // Declaration for marquee auto-scroll function
 namespace graphics {

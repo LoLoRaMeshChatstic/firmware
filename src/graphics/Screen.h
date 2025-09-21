@@ -227,7 +227,9 @@ class Screen : public concurrency::OSThread
     size_t frameCount = 0; // Total number of active frames
     ~Screen();
     void openNodeInfoFor(NodeNum nodeNum);// Opens direct the node info screen for a specific node
+#if HAS_WIFI && !defined(ARCH_PORTDUINO)
     void openMqttInfoScreen(); // Opens direct the MQTT status info screen
+#endif
 
     // Which frame we want to be displayed, after we regen the frameset by calling setFrames
     enum FrameFocus : uint8_t {

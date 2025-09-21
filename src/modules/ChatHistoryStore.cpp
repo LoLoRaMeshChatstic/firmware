@@ -8,7 +8,7 @@ namespace chat {
 
 static const std::deque<ChatEntry> kEmptyDeque;
 
-// --- Serialización CSV simple ---
+// --- Simple CSV serialization ---
 std::string ChatEntry::serialize(const ChatEntry& e) {
   char buf[64];
   snprintf(buf, sizeof(buf), "%u,%d,%d,%d,%u,%u,", e.ts, e.outgoing, e.isChannel, e.unread, e.node, e.channel);
@@ -23,7 +23,9 @@ std::string ChatEntry::serialize(const ChatEntry& e) {
 
 ChatEntry ChatEntry::deserialize(const std::string& line) {
   ChatEntry e;
+#if defined(__EXCEPTIONS) || defined(ARCH_ESP32)
   try {
+#endif
     std::stringstream ss(line);
     std::string item;
     if (!std::getline(ss, item, ',')) return e;
@@ -49,10 +51,12 @@ ChatEntry ChatEntry::deserialize(const std::string& line) {
     }
     txt += item.substr(last);
     e.text = txt;
+#if defined(__EXCEPTIONS) || defined(ARCH_ESP32)
   } catch (...) {
-    // Si hay error en el parsing, devolver entrada vacía
+    // If there's an error in parsing, return empty entry
     e = ChatEntry{};
   }
+#endif
   return e;
 }
 
@@ -63,8 +67,8 @@ ChatHistoryStore& ChatHistoryStore::instance() {
 }
 
 ChatHistoryStore::ChatHistoryStore() {
-  // No cargar datos síncronamente en el constructor para evitar bucles de reinicio
-  // La carga se hará bajo demanda
+  // Don't load data synchronously in constructor to avoid restart loops
+  // Loading will be done on demand
 }
 
 void ChatHistoryStore::pushBounded(std::deque<ChatEntry>& q, ChatEntry e) {
@@ -84,7 +88,7 @@ void ChatHistoryStore::addDM(uint32_t peer, bool outgoing, const std::string& te
   e.ts       = ts;
   e.outgoing = outgoing;
   e.isChannel = false;
-  e.unread   = unread && !outgoing; // Solo los mensajes entrantes pueden ser no leídos
+  e.unread   = unread && !outgoing; // Only incoming messages can be unread
   e.node     = peer;     // peer of the conversation
   e.channel  = 0;
   e.text     = text;
@@ -97,14 +101,14 @@ void ChatHistoryStore::addCHAN(uint8_t channel, uint32_t fromNode, bool outgoing
   e.ts       = ts;
   e.outgoing = outgoing;
   e.isChannel = true;
-  e.unread   = unread && !outgoing; // Solo los mensajes entrantes pueden ser no leídos
+  e.unread   = unread && !outgoing; // Only incoming messages can be unread
   e.node     = fromNode;   // sender (for alias display); 0 if it's us and doesn't matter
   e.channel  = channel;
   e.text     = text;
   pushBounded(ch_[channel], std::move(e));
   saveCHAN(channel);
 }
-// --- Persistencia ---
+// --- Persistence ---
 void ChatHistoryStore::saveDM(uint32_t peer) {
   std::string filename = "/chat_dm_" + std::to_string(peer) + ".txt";
   auto f = FSCom.open(filename.c_str(), FILE_O_WRITE);
@@ -121,22 +125,26 @@ void ChatHistoryStore::loadDM(uint32_t peer) {
   if (!f) return; // Archivo no existe, sin error
   
   std::deque<ChatEntry> q;
+#if defined(__EXCEPTIONS) || defined(ARCH_ESP32)
   try {
+#endif
     while (f.available()) {
       std::string line = f.readStringUntil('\n').c_str();
-      if (!line.empty() && line.length() < 512) { // Validación básica de tamaño
+      if (!line.empty() && line.length() < 512) { // Basic size validation
         ChatEntry entry = ChatEntry::deserialize(line);
-        // Validación básica de datos
+        // Basic data validation
         if (entry.ts > 0 && entry.ts < 4000000000U && entry.text.length() < 256) {
           q.push_back(std::move(entry));
         }
       }
     }
     dm_[peer] = std::move(q);
+#if defined(__EXCEPTIONS) || defined(ARCH_ESP32)
   } catch (...) {
-    // Si hay error en la deserialización, ignora el archivo
+    // If there's an error in deserialization, ignore the file
     dm_[peer] = std::deque<ChatEntry>();
   }
+#endif
   f.close();
 }
 
@@ -156,22 +164,26 @@ void ChatHistoryStore::loadCHAN(uint8_t channel) {
   if (!f) return; // Archivo no existe, sin error
   
   std::deque<ChatEntry> q;
+#if defined(__EXCEPTIONS) || defined(ARCH_ESP32)
   try {
+#endif
     while (f.available()) {
       std::string line = f.readStringUntil('\n').c_str();
-      if (!line.empty() && line.length() < 512) { // Validación básica de tamaño
+      if (!line.empty() && line.length() < 512) { // Basic size validation
         ChatEntry entry = ChatEntry::deserialize(line);
-        // Validación básica de datos
+        // Basic data validation
         if (entry.ts > 0 && entry.ts < 4000000000U && entry.text.length() < 256) {
           q.push_back(std::move(entry));
         }
       }
     }
     ch_[channel] = std::move(q);
+#if defined(__EXCEPTIONS) || defined(ARCH_ESP32)
   } catch (...) {
-    // Si hay error en la deserialización, ignora el archivo
+    // If there's an error in deserialization, ignore the file
     ch_[channel] = std::deque<ChatEntry>();
   }
+#endif
   f.close();
 }
 
@@ -181,23 +193,27 @@ void ChatHistoryStore::saveAll() {
 }
 
 void ChatHistoryStore::loadAll() {
-  // NO cargar agresivamente al inicio para evitar bucles de reinicio
-  // La carga se hace bajo demanda cuando se necesite cada conversación
-  // Esta función queda por compatibilidad pero no hace nada crítico
+  // DON'T load aggressively at startup to avoid restart loops
+  // Loading is done on demand when each conversation is needed
+  // This function remains for compatibility but doesn't do anything critical
 }
 
 const std::deque<ChatEntry>& ChatHistoryStore::getDM(uint32_t peer) const {
   auto it = dm_.find(peer);
   if (it != dm_.end()) return it->second;
   
-  // Carga bajo demanda con manejo de errores
+  // On-demand loading with error handling
+#if defined(__EXCEPTIONS) || defined(ARCH_ESP32)
   try {
+#endif
     const_cast<ChatHistoryStore*>(this)->loadDM(peer);
     it = dm_.find(peer);
     if (it != dm_.end()) return it->second;
+#if defined(__EXCEPTIONS) || defined(ARCH_ESP32)
   } catch (...) {
-    // Si falla la carga, devolver deque vacío silenciosamente
+    // If loading fails, return empty deque silently
   }
+#endif
   
   return kEmptyDeque;
 }
@@ -206,14 +222,18 @@ const std::deque<ChatEntry>& ChatHistoryStore::getCHAN(uint8_t channel) const {
   auto it = ch_.find(channel);
   if (it != ch_.end()) return it->second;
   
-  // Carga bajo demanda con manejo de errores  
+  // On-demand loading with error handling  
+#if defined(__EXCEPTIONS) || defined(ARCH_ESP32)
   try {
+#endif
     const_cast<ChatHistoryStore*>(this)->loadCHAN(channel);
     it = ch_.find(channel);
     if (it != ch_.end()) return it->second;
+#if defined(__EXCEPTIONS) || defined(ARCH_ESP32)
   } catch (...) {
-    // Si falla la carga, devolver deque vacío silenciosamente
+    // If loading fails, return empty deque silently
   }
+#endif
   
   return kEmptyDeque;
 }
@@ -269,7 +289,7 @@ std::vector<uint8_t> ChatHistoryStore::listChannels() const {
   return v;
 }
 
-// --- Gestión de mensajes no leídos ---
+// --- Unread message management ---
 int ChatHistoryStore::getUnreadCountDM(uint32_t peer) const {
   auto it = dm_.find(peer);
   if (it == dm_.end()) return 0;
@@ -295,14 +315,14 @@ int ChatHistoryStore::getUnreadCountCHAN(uint8_t channel) const {
 int ChatHistoryStore::getTotalUnreadCount() const {
   int total = 0;
   
-  // Contar DMs no leídos
+  // Count unread DMs
   for (const auto& kv : dm_) {
     for (const auto& entry : kv.second) {
       if (entry.unread && !entry.outgoing) total++;
     }
   }
   
-  // Contar canales no leídos
+  // Count unread channels
   for (const auto& kv : ch_) {
     for (const auto& entry : kv.second) {
       if (entry.unread && !entry.outgoing) total++;
@@ -343,7 +363,7 @@ void ChatHistoryStore::markAsReadCHAN(uint8_t channel) {
 }
 
 void ChatHistoryStore::markAllAsRead() {
-  // Marcar todos los DMs como leídos
+  // Mark all DMs as read
   for (auto& kv : dm_) {
     bool changed = false;
     for (auto& entry : kv.second) {
@@ -355,7 +375,7 @@ void ChatHistoryStore::markAllAsRead() {
     if (changed) saveDM(kv.first);
   }
   
-  // Marcar todos los canales como leídos
+  // Mark all channels as read
   for (auto& kv : ch_) {
     bool changed = false;
     for (auto& entry : kv.second) {

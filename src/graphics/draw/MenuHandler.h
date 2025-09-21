@@ -106,6 +106,8 @@ class menuHandler
     static void silentModeToggle();
     static void sleepMenu();
     static void sleepTimerConfig();
+    static void openChatActionsForNode(uint32_t nodeId);
+    static void openChatActionsForChannel(uint8_t ch);
 
   private:
     static void saveUIConfig();

@@ -47,7 +47,7 @@
 // Remove Canned message screen if no action is taken for some milliseconds
 
 
-std::string g_pendingKeyboardHeader; // Global variable to hold pending keyboard header text
+extern std::string g_pendingKeyboardHeader; // Global variable to hold pending keyboard header text
 extern bool kb_found; // from InputBroker.cpp
 #define INACTIVATE_AFTER_MS 20000
 
@@ -247,7 +247,7 @@ int CannedMessageModule::splitConfiguredMessages()
     int tempCount = 0;
     // Insert at position 0 (top)
     tempMessages[tempCount++] = "[Select Destination]";
-    // Siempre añadir la opción Free Text
+    // Always add the Free Text option
     tempMessages[tempCount++] = "[-- Free Text --]";
 
     // First message always starts at buffer start

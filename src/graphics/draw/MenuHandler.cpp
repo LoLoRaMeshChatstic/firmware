@@ -17,16 +17,33 @@
 #include "modules/AdminModule.h"
 #include "modules/CannedMessageModule.h"
 #include "modules/KeyVerificationModule.h"
+#include "modules/ChatHistoryStore.h"
+#include "FSCommon.h"
 
 #endif
 #include "modules/TraceRouteModule.h"
 #include "NotificationRenderer.h"
 #include <functional>
+#include <set>
+#include <map>
 #include "input/cardKbI2cImpl.h"
 
 #if HAS_WIFI && !defined(ARCH_PORTDUINO)
 #include <WiFi.h>
 #endif
+
+// External variables from Screen.cpp
+struct ScrollState {
+    int sel = 0;            // selected line (0..visible-1)
+    int scrollIndex = 0;    // first visible message (sliding window)
+    int offset = 0;         // horizontal offset (characters)
+    uint32_t lastMs = 0;    // last update
+};
+
+extern std::string g_pendingKeyboardHeader;
+extern std::set<uint8_t> g_favChannelTabs;
+extern std::map<uint32_t, ScrollState> g_nodeScroll;
+extern std::map<uint8_t, ScrollState> g_chanScroll;
 
 
 #include <algorithm>
@@ -45,9 +62,6 @@ extern uint16_t TFT_MESH;
 
 namespace graphics
 {
-// --- Scroll chat for short press (non-persistent) ---
-bool g_chatScrollByPress = false;
-bool g_chatScrollUpDown = false;  // true = Up, false = Down
 
 menuHandler::screenMenus menuHandler::menuQueue = menu_none;
 bool test_enabled = false;
@@ -91,8 +105,25 @@ void menuHandler::loraMenu()
         }
 #endif
     };
-#endif
     screen->showOverlayBanner(bannerOptions);
+#else
+    static const char *optionsArray[] = {"Back", "Region Picker", "Device Role"};
+    enum optionsNumbers { Back = 0, lora_picker = 1, device_role_picker = 2 };
+    BannerOverlayOptions bannerOptions;
+    bannerOptions.message = "LoRa Actions";
+    bannerOptions.optionsArrayPtr = optionsArray;
+    bannerOptions.optionsCount = 3;
+    bannerOptions.bannerCallback = [](int selected) -> void {
+        if (selected == Back) {
+            // No action
+        } else if (selected == lora_picker) {
+            menuHandler::menuQueue = menuHandler::lora_picker;
+        } else if (selected == device_role_picker) {
+            menuHandler::menuQueue = menuHandler::device_role_picker;
+        }
+    };
+    screen->showOverlayBanner(bannerOptions);
+#endif
 }
 
 void menuHandler::OnboardMessage()
@@ -1227,7 +1258,7 @@ void menuHandler::wifiConfigMenu()
     o.durationMs      = 0;
     o.optionsArrayPtr = options;
     o.optionsCount    = count;
-    o.optionsEnumPtr  = nullptr; // devolvemos ├¡ndice
+    o.optionsEnumPtr  = nullptr; // we return index
 
     o.bannerCallback = [](int sel) {
         if (sel == s_rescanIdx) {
@@ -1835,7 +1866,9 @@ void menuHandler::mqttBaseMenu()
             screen->runNow();
         } else if (selected == Status) {
             // Show detailed MQTT status screen
+#if HAS_WIFI && !defined(ARCH_PORTDUINO)
             screen->openMqttInfoScreen();
+#endif
         }
     };
     screen->showOverlayBanner(bannerOptions);
@@ -1986,6 +2019,285 @@ void menuHandler::sleepTimerConfig()
         }
     };
     screen->showOverlayBanner(bannerOptions);
+}
+
+void menuHandler::openChatActionsForNode(uint32_t nodeId)
+{
+    // Dynamic options (max 9 visible here)
+    enum { kPreset = 1, kFree = 2, kRemove = 3, kRemoveFav = 4, kDeleteNode = 5, kMarkRead = 6, kInfo = 7, kScroll = 8, kScrollType = 9, kBack = 10 };
+
+    static const char* opts[9];
+    static int         enums[9];
+    int count = 0;
+
+    // Preset / Freetext according to CardKB
+    if (kb_found) {
+        opts[count]  = "New Freetext Msg";
+        enums[count] = kFree;
+        count++;
+    } else {
+        opts[count]  = "New Preset Msg";
+        enums[count] = kPreset;
+        count++;
+    }
+
+    // Scroll Btn only if there is NO CardKB and NO rotary encoder - MOVED TO SECOND POSITION
+    static char scrollLabel[24];
+    static char scrollTypeLabel[24];
+    if (!kb_found && rotaryEncoderInterruptImpl1 == nullptr) {
+        snprintf(scrollLabel, sizeof(scrollLabel), "Scroll Btn: %s", g_chatScrollByPress ? "ON" : "OFF");
+        opts[count]  = scrollLabel;
+        enums[count] = kScroll;
+        count++;
+
+        // Show scroll direction option only when scroll button is ON
+        if (g_chatScrollByPress) {
+            snprintf(scrollTypeLabel, sizeof(scrollTypeLabel), "Scroll Dir: %s", g_chatScrollUpDown ? "UP" : "DOWN");
+            opts[count]  = scrollTypeLabel;
+            enums[count] = kScrollType;
+            count++;
+        }
+    }
+
+    // Common
+    opts[count]  = "Remove Chat";
+    enums[count] = kRemove;
+    count++;
+
+    opts[count]  = "Remove Fav";
+    enums[count] = kRemoveFav;
+    count++;
+
+    opts[count]  = "Delete Node";
+    enums[count] = kDeleteNode;
+    count++;
+
+    opts[count]  = "Mark All Read";
+    enums[count] = kMarkRead;
+    count++;
+
+    opts[count]  = "Node Info";
+    enums[count] = kInfo;
+    count++;
+
+    opts[count]  = "Back";
+    enums[count] = kBack;
+    count++;
+
+    BannerOverlayOptions o;
+    o.message         = "Menu Chat";
+    o.durationMs      = 0;
+    o.optionsArrayPtr = opts;
+    o.optionsEnumPtr  = enums;
+    o.optionsCount    = count;
+
+    o.bannerCallback  = [nodeId](int sel) {
+    // Close the banner before changing screens/states
+        NotificationRenderer::pauseBanner      = true;
+        NotificationRenderer::alertBannerUntil = 1;
+
+        switch (sel) {
+        case kPreset:
+            if (cannedMessageModule) cannedMessageModule->LaunchWithDestination(nodeId);
+            break;
+
+        case kFree:
+            if (cannedMessageModule) cannedMessageModule->LaunchFreetextWithDestination(nodeId);
+            break;
+
+        case kRemove:
+            // Remove chat history only (RAM + persistent)
+            chat::ChatHistoryStore::instance().clearDM(nodeId);
+            // Also remove persistent file
+            {
+                std::string filename = "/chat_dm_" + std::to_string(nodeId) + ".txt";
+                FSCom.remove(filename.c_str());
+            }
+            if (screen) screen->setFrames(Screen::FOCUS_PRESERVE);
+            break;
+
+        case kRemoveFav:
+            if (nodeDB) nodeDB->set_favorite(false, nodeId);
+            if (screen) screen->setFrames(Screen::FOCUS_PRESERVE);
+            break;
+
+        case kDeleteNode:
+            // Completely remove the node from the database
+            if (nodeDB) {
+                nodeDB->removeNodeByNum(nodeId);
+                // Also remove chat history
+                chat::ChatHistoryStore::instance().clearDM(nodeId);
+                // Also remove persistent chat file
+                std::string filename = "/chat_dm_" + std::to_string(nodeId) + ".txt";
+                FSCom.remove(filename.c_str());
+                if (screen) screen->showSimpleBanner("Node deleted", 1200);
+            }
+            if (screen) screen->setFrames(Screen::FOCUS_PRESERVE);
+            break;
+
+        case kMarkRead:
+            // Mark all DM messages as read
+            chat::ChatHistoryStore::instance().markAsReadDM(nodeId);
+            // Reset scroll to newest message
+            if (g_nodeScroll.find(nodeId) != g_nodeScroll.end()) {
+                g_nodeScroll[nodeId].scrollIndex = 0;
+                g_nodeScroll[nodeId].sel = 0;
+            }
+            if (screen) screen->showSimpleBanner("All marked as read", 1200);
+            if (screen) screen->setFrames(Screen::FOCUS_PRESERVE);
+            break;
+
+        case kInfo:
+            if (screen) {
+                graphics::UIRenderer::currentFavoriteNodeNum = nodeId;
+                screen->openNodeInfoFor(nodeId);
+            }
+            break;
+
+        case kScroll:
+            g_chatScrollByPress = !g_chatScrollByPress;
+            if (screen) screen->showSimpleBanner(g_chatScrollByPress ? "Scroll Btn: ON" : "Scroll Btn: OFF", 1200);
+            break;
+
+        case kScrollType:
+            g_chatScrollUpDown = !g_chatScrollUpDown;
+            if (screen) screen->showSimpleBanner(g_chatScrollUpDown ? "Scroll Dir: UP" : "Scroll Dir: DOWN", 1200);
+            break;
+
+        default:
+            break;
+        }
+
+        if (screen) screen->forceDisplay(true);
+    };
+
+    screen->showOverlayBanner(o);
+}
+
+void menuHandler::openChatActionsForChannel(uint8_t ch)
+{
+    enum { kPreset = 1, kFree = 2, kRemove = 3, kMarkRead = 4, kScroll = 5, kScrollType = 6, kBack = 7 };
+
+    static const char* opts[7];
+    static int         enums[7];
+    int count = 0;
+
+    // Preset / Freetext according to CardKB
+    if (kb_found) {
+        opts[count]  = "New Freetext Msg";
+        enums[count] = kFree;
+        count++;
+    } else {
+        opts[count]  = "New Preset Msg";
+        enums[count] = kPreset;
+        count++;
+    }
+
+    // Common
+    opts[count]  = "Remove Chat";
+    enums[count] = kRemove;
+    count++;
+
+    opts[count]  = "Mark All Read";
+    enums[count] = kMarkRead;
+    count++;
+
+    // Scroll Btn only if there is NO CardKB and NO rotary encoder
+    static char scrollLabel[24];
+    static char scrollTypeLabel[24];
+    if (!kb_found && rotaryEncoderInterruptImpl1 == nullptr) {
+        snprintf(scrollLabel, sizeof(scrollLabel), "Scroll Btn: %s", g_chatScrollByPress ? "ON" : "OFF");
+        opts[count]  = scrollLabel;
+        enums[count] = kScroll;
+        count++;
+        // Show scroll direction option only when scroll button is ON
+        if (g_chatScrollByPress) {
+            snprintf(scrollTypeLabel, sizeof(scrollTypeLabel), "Scroll Dir: %s", g_chatScrollUpDown ? "UP" : "DOWN");
+            opts[count]  = scrollTypeLabel;
+            enums[count] = kScrollType;
+            count++;
+        }
+    }
+
+    opts[count]  = "Back";
+    enums[count] = kBack;
+    count++;
+
+    // Title with channel name (if exists)
+    const meshtastic_Channel c = channels.getByIndex(ch);
+    const char *cname = (c.settings.name[0]) ? c.settings.name : nullptr;
+    char title[64];
+    if (cname) snprintf(title, sizeof(title), "Channel: %s", cname);
+    else       snprintf(title, sizeof(title), "Channel %u", (unsigned)ch);
+
+    BannerOverlayOptions o;
+    o.message         = title;
+    o.durationMs      = 0;
+    o.optionsArrayPtr = opts;
+    o.optionsEnumPtr  = enums;
+    o.optionsCount    = count;
+
+    o.bannerCallback  = [ch](int sel) {
+    // Close banner before acting (avoids weird states)
+        NotificationRenderer::pauseBanner      = true;
+        NotificationRenderer::alertBannerUntil = 1;
+
+    // Prepare keyboard header (if input is opened later)
+        const meshtastic_Channel cc = channels.getByIndex(ch);
+        const char *cname2 = (cc.settings.name[0]) ? cc.settings.name : nullptr;
+        char hdr[64];
+        if (cname2) snprintf(hdr, sizeof(hdr), "To: %s", cname2);
+        else        snprintf(hdr, sizeof(hdr), "To: Channel %u", (unsigned)ch);
+        g_pendingKeyboardHeader = hdr;
+
+    // Ensure channel is active and marked as favorite-tab
+        channels.setActiveByIndex(ch);
+        g_favChannelTabs.insert(ch);
+
+        switch (sel) {
+        case kPreset:
+            if (cannedMessageModule) cannedMessageModule->LaunchWithDestination(NODENUM_BROADCAST, ch);
+            break;
+        case kFree:
+            if (cannedMessageModule) cannedMessageModule->LaunchFreetextWithDestination(NODENUM_BROADCAST, ch);
+            break;
+        case kRemove:
+            // Remove chat history but maintain channel and frame (RAM + persistent)
+            chat::ChatHistoryStore::instance().clearCHAN(ch);
+            // Also remove persistent file
+            {
+                std::string filename = "/chat_ch_" + std::to_string(ch) + ".txt";
+                FSCom.remove(filename.c_str());
+            }
+            if (screen) screen->setFrames(Screen::FOCUS_PRESERVE);
+            break;
+        case kMarkRead:
+            // Mark all channel messages as read
+            chat::ChatHistoryStore::instance().markAsReadCHAN(ch);
+            // Reset scroll to newest message
+            if (g_chanScroll.find(ch) != g_chanScroll.end()) {
+                g_chanScroll[ch].scrollIndex = 0;
+                g_chanScroll[ch].sel = 0;
+            }
+            if (screen) screen->showSimpleBanner("All marked as read", 1200);
+            if (screen) screen->setFrames(Screen::FOCUS_PRESERVE);
+            break;
+        case kScroll:
+            g_chatScrollByPress = !g_chatScrollByPress;
+            if (screen) screen->showSimpleBanner(g_chatScrollByPress ? "Scroll Btn: ON" : "Scroll Btn: OFF", 1200);
+            break;
+        case kScrollType:
+            g_chatScrollUpDown = !g_chatScrollUpDown;
+            if (screen) screen->showSimpleBanner(g_chatScrollUpDown ? "Scroll Dir: UP" : "Scroll Dir: DOWN", 1200);
+            break;
+        default:
+            break;
+        }
+
+        if (screen) screen->forceDisplay(true);
+    };
+
+    screen->showOverlayBanner(o);
 }
 
 } // namespace graphics
