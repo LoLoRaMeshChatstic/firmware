@@ -54,7 +54,9 @@ class menuHandler
         trace_route_menu,
         node_info_menu,
         throttle_message,
-        FrameToggles
+        FrameToggles,
+        sleep_menu,
+        sleep_timer_config
     };
     static screenMenus menuQueue;
 
@@ -102,6 +104,8 @@ class menuHandler
     static void powerMenu();
     static void FrameToggles_menu();
     static void silentModeToggle();
+    static void sleepMenu();
+    static void sleepTimerConfig();
 
   private:
     static void saveUIConfig();

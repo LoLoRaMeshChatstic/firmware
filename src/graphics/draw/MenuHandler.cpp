@@ -489,7 +489,8 @@ void menuHandler::homeBaseMenu()
             saveUIConfig();
 #endif
         } else if (selected == Sleep) {
-            screen->setOn(false);
+            menuHandler::menuQueue = menuHandler::sleep_menu;
+            screen->runNow();
         } else if (selected == Position) {
             InputEvent event = {.inputEvent = (input_broker_event)INPUT_BROKER_SEND_PING, .kbchar = 0, .touchX = 0, .touchY = 0};
             inputBroker->injectInputEvent(&event);
@@ -1800,6 +1801,12 @@ void menuHandler::handleMenuSwitch(OLEDDisplay *display)
     case FrameToggles:
         FrameToggles_menu();
         break;
+    case sleep_menu:
+        sleepMenu();
+        break;
+    case sleep_timer_config:
+        sleepTimerConfig();
+        break;
     case throttle_message:
         screen->showSimpleBanner("Too Many Attempts\nTry again in 60 seconds.", 5000);
         break;
@@ -1920,6 +1927,73 @@ void menuHandler::silentModeToggle()
             screen->showSimpleBanner(g_chatSilentMode ? "Silent Mode ON" : "Silent Mode OFF", 2000);
         }
     );
+}
+
+void menuHandler::sleepMenu()
+{
+    enum optionsNumbers { Back, SleepNow, TimerConfig };
+    static const char *optionsArray[3] = {"Back", "Sleep Now", "Timer Config"};
+    static int optionsEnumArray[3] = {Back, SleepNow, TimerConfig};
+
+    BannerOverlayOptions bannerOptions;
+    bannerOptions.message = "Sleep Options";
+    bannerOptions.optionsArrayPtr = optionsArray;
+    bannerOptions.optionsCount = 3;
+    bannerOptions.optionsEnumPtr = optionsEnumArray;
+    bannerOptions.bannerCallback = [](int selected) -> void {
+        if (selected == SleepNow) {
+            screen->setOn(false);
+        } else if (selected == TimerConfig) {
+            menuHandler::menuQueue = menuHandler::sleep_timer_config;
+            screen->runNow();
+        } else {
+            menuQueue = system_base_menu;
+            screen->runNow();
+        }
+    };
+    screen->showOverlayBanner(bannerOptions);
+}
+
+void menuHandler::sleepTimerConfig()
+{
+    enum optionsNumbers { Back, Timer30s, Timer1m, Timer5m, Timer10m };
+    static const char *optionsArray[5] = {"Back", "30 seconds", "1 minute", "5 minutes", "10 minutes"};
+    static int optionsEnumArray[5] = {Back, Timer30s, Timer1m, Timer5m, Timer10m};
+
+    BannerOverlayOptions bannerOptions;
+    bannerOptions.message = "Sleep Timer";
+    bannerOptions.optionsArrayPtr = optionsArray;
+    bannerOptions.optionsCount = 5;
+    bannerOptions.optionsEnumPtr = optionsEnumArray;
+    bannerOptions.bannerCallback = [](int selected) -> void {
+        uint32_t timeoutMs = 0;
+        const char* message = "";
+        
+        if (selected == Timer30s) {
+            timeoutMs = 30 * 1000;
+            message = "30s Screen Timer Set";
+        } else if (selected == Timer1m) {
+            timeoutMs = 60 * 1000;
+            message = "1m Screen Timer Set";
+        } else if (selected == Timer5m) {
+            timeoutMs = 5 * 60 * 1000;
+            message = "5m Screen Timer Set";
+        } else if (selected == Timer10m) {
+            timeoutMs = 10 * 60 * 1000;
+            message = "10m Screen Timer Set";
+        }
+        
+        if (timeoutMs > 0) {
+            // Configurar el timeout personalizado
+            config.display.screen_on_secs = timeoutMs / 1000;
+            service->reloadConfig(SEGMENT_CONFIG);
+            screen->showSimpleBanner(message, 2000);
+        } else {
+            menuQueue = sleep_menu;
+            screen->runNow();
+        }
+    };
+    screen->showOverlayBanner(bannerOptions);
 }
 
 } // namespace graphics

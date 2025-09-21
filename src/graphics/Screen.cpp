@@ -262,13 +262,12 @@ static std::map<uint8_t , ScrollState> g_chanScroll; //  channel
 
 // Marquee auto-scroll control
 static uint32_t g_lastInteractionMs = 0;   // Last user interaction timestamp
-static const uint32_t MARQUEE_TIMEOUT_MS = 40000; // 40 seconds timeout for home return
-static const uint32_t SCREEN_OFF_TIMEOUT_MS = 60000; // 60 seconds timeout for screen off
+static const uint32_t MARQUEE_TIMEOUT_MS = 30000; // 30 seconds timeout for marquee reset
+static const uint32_t HOME_TIMEOUT_MS = 50000; // 40 seconds timeout for home return
 static uint8_t g_previousFrame = 0xFF;     // Track frame changes for auto-scroll on enter
 
 // Forward declarations
 static void updateLastInteraction();
-void checkInactivityTimeouts();
 
 // Helpers (in case we ever treat channel as a "virtual node")
 static inline bool isVirtualChannelNode(uint32_t nodeId) { return (nodeId & 0xC0000000u) == 0xC0000000u; }
@@ -355,9 +354,7 @@ void resetScrollToTop(uint32_t nodeId, bool isDM) {
     }
 }
 
-void checkInactivityTimeouts() {
-    if (!screen) return;  // Use global screen instance
-
+void Screen::checkInactivityTimeouts() {
     if (g_lastInteractionMs == 0) {
         g_lastInteractionMs = millis(); // Initialize on first call
         return;
@@ -366,23 +363,43 @@ void checkInactivityTimeouts() {
     uint32_t now = millis();
     uint32_t inactiveTime = now - g_lastInteractionMs;
     
-    // 60 seconds without interaction - turn off screen
-    if (inactiveTime >= SCREEN_OFF_TIMEOUT_MS) {
-        LOG_DEBUG("Screen timeout: turning off screen after %d seconds", SCREEN_OFF_TIMEOUT_MS/1000);
-        screen->setOn(false);
-        return; // Don't reset timer, let screen stay off
+    // 30 seconds without interaction - reset marquee/scroll position
+    if (inactiveTime >= MARQUEE_TIMEOUT_MS) {
+        if (getUI() && isShowingNormalScreen()) {
+            uint8_t currentFrame = getUI()->getUiState()->currentFrame;
+            
+            // Reset scroll positions for current chat if in a chat frame
+            // Check if we're in a DM chat
+            if (g_favChatFirst != (size_t)-1 && currentFrame >= g_favChatFirst && currentFrame <= g_favChatLast) {
+                size_t index = currentFrame - g_favChatFirst;
+                if (index < g_favChatNodes.size()) {
+                    uint32_t nodeId = g_favChatNodes[index];
+                    resetScrollToTop(nodeId, true);
+                    LOG_DEBUG("Marquee timeout: reset DM scroll for node %08x", nodeId);
+                }
+            }
+            // Check if we're in a channel chat
+            else if (g_chanTabFirst != (size_t)-1 && currentFrame >= g_chanTabFirst && currentFrame <= g_chanTabLast) {
+                size_t index = currentFrame - g_chanTabFirst;
+                if (index < g_chanTabs.size()) {
+                    uint8_t ch = g_chanTabs[index];
+                    resetScrollToTop(ch, false);
+                    LOG_DEBUG("Marquee timeout: reset channel scroll for ch %d", ch);
+                }
+            }
+        }
     }
     
     // 40 seconds without interaction - return to home frame and reset scroll
-    if (inactiveTime >= MARQUEE_TIMEOUT_MS) {
-        if (screen->getUI() && screen->isShowingNormalScreen()) {
-            uint8_t currentFrame = screen->getUI()->getUiState()->currentFrame;
+    if (inactiveTime >= HOME_TIMEOUT_MS) {
+        if (getUI() && isShowingNormalScreen()) {
+            uint8_t currentFrame = getUI()->getUiState()->currentFrame;
             
             // If not on home frame (frame 0), go to home
             if (currentFrame != 0) {
-                LOG_DEBUG("Inactivity timeout: returning to home frame from frame %d", currentFrame);
-                screen->getUI()->switchToFrame(0);
-                screen->forceDisplay();
+                LOG_DEBUG("Home timeout: returning to home frame from frame %d", currentFrame);
+                getUI()->switchToFrame(0);
+                forceDisplay();
             }
 
             // Reset scroll positions for current chat if in a chat frame
@@ -392,7 +409,7 @@ void checkInactivityTimeouts() {
                 if (index < g_favChatNodes.size()) {
                     uint32_t nodeId = g_favChatNodes[index];
                     resetScrollToTop(nodeId, true);
-                    LOG_DEBUG("Inactivity timeout: reset DM scroll for node %08x", nodeId);
+                    LOG_DEBUG("Home timeout: reset DM scroll for node %08x", nodeId);
                 }
             }
             // Check if we're in a channel chat
@@ -401,11 +418,11 @@ void checkInactivityTimeouts() {
                 if (index < g_chanTabs.size()) {
                     uint8_t ch = g_chanTabs[index];
                     resetScrollToTop(ch, false);
-                    LOG_DEBUG("Inactivity timeout: reset channel scroll for ch %d", ch);
+                    LOG_DEBUG("Home timeout: reset channel scroll for ch %d", ch);
                 }
             }
         }
-        g_lastInteractionMs = now; // Reset timer
+        g_lastInteractionMs = now; // Reset timer only after going home
     }
 }
 
@@ -469,6 +486,24 @@ static void openChatActionsForNode(uint32_t nodeId)
         count++;
     }
 
+    // Scroll Btn only if there is NO CardKB and NO rotary encoder - MOVED TO SECOND POSITION
+    static char scrollLabel[24];
+    static char scrollTypeLabel[24];
+    if (!kb_found && rotaryEncoderInterruptImpl1 == nullptr) {
+        snprintf(scrollLabel, sizeof(scrollLabel), "Scroll Btn: %s", g_chatScrollByPress ? "ON" : "OFF");
+        opts[count]  = scrollLabel;
+        enums[count] = kScroll;
+        count++;
+
+        // Show scroll direction option only when scroll button is ON
+        if (g_chatScrollByPress) {
+            snprintf(scrollTypeLabel, sizeof(scrollTypeLabel), "Scroll Dir: %s", g_chatScrollUpDown ? "UP" : "DOWN");
+            opts[count]  = scrollTypeLabel;
+            enums[count] = kScrollType;
+            count++;
+        }
+    }
+
     // Common
     opts[count]  = "Remove Chat";
     enums[count] = kRemove;
@@ -489,24 +524,6 @@ static void openChatActionsForNode(uint32_t nodeId)
     opts[count]  = "Node Info";
     enums[count] = kInfo;
     count++;
-
-    // Scroll Btn only if there is NO CardKB and NO rotary encoder
-    static char scrollLabel[24];
-    static char scrollTypeLabel[24];
-    if (!kb_found && rotaryEncoderInterruptImpl1 == nullptr) {
-        snprintf(scrollLabel, sizeof(scrollLabel), "Scroll Btn: %s", g_chatScrollByPress ? "ON" : "OFF");
-        opts[count]  = scrollLabel;
-        enums[count] = kScroll;
-        count++;
-
-        // Show scroll direction option only when scroll button is ON
-        if (g_chatScrollByPress) {
-            snprintf(scrollTypeLabel, sizeof(scrollTypeLabel), "Scroll Dir: %s", g_chatScrollUpDown ? "UP" : "DOWN");
-            opts[count]  = scrollTypeLabel;
-            enums[count] = kScrollType;
-            count++;
-        }
-    }
 
     opts[count]  = "Back";
     enums[count] = kBack;

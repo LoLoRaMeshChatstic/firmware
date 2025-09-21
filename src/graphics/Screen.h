@@ -632,6 +632,9 @@ class Screen : public concurrency::OSThread
     void setScreensaverFrames(FrameCallback einkScreensaver = NULL);
 #endif
 
+    /// Check for inactivity timeouts and handle home navigation
+    void checkInactivityTimeouts();
+
   protected:
     /// Updates the UI.
     //
