@@ -420,4 +420,32 @@ int ChatHistoryStore::getFirstUnreadIndexCHAN(uint8_t channel) const {
   return -1; // Todos los mensajes están leídos
 }
 
+int ChatHistoryStore::getLastReadIndexDM(uint32_t peer) const {
+  auto it = dm_.find(peer);
+  if (it == dm_.end()) return -1;
+  
+  // Buscar el último mensaje leído desde el más reciente (inicio del deque)
+  const auto& history = it->second;
+  for (int i = 0; i < (int)history.size(); ++i) {
+    if (!history[i].unread) {
+      return i;
+    }
+  }
+  return -1; // Ningún mensaje está leído
+}
+
+int ChatHistoryStore::getLastReadIndexCHAN(uint8_t channel) const {
+  auto it = ch_.find(channel);
+  if (it == ch_.end()) return -1;
+  
+  // Buscar el último mensaje leído desde el más reciente (inicio del deque)
+  const auto& history = it->second;
+  for (int i = 0; i < (int)history.size(); ++i) {
+    if (!history[i].unread) {
+      return i;
+    }
+  }
+  return -1; // Ningún mensaje está leído
+}
+
 } // namespace chat

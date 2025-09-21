@@ -310,20 +310,20 @@ void resetScrollToTop(uint32_t nodeId, bool isDM) {
         const auto& dmHistory = chat::ChatHistoryStore::instance().getDM(nodeId);
         int totalMessages = (int)dmHistory.size();
         if (totalMessages > 0) {
-            // Buscar el primer mensaje no leído
-            int firstUnreadIdx = chat::ChatHistoryStore::instance().getFirstUnreadIndexDM(nodeId);
+            // Buscar el último mensaje leído para posicionarse ahí
+            int lastReadIdx = chat::ChatHistoryStore::instance().getLastReadIndexDM(nodeId);
             
-            if (firstUnreadIdx >= 0) {
-                // Posicionar en el primer mensaje no leído
-                // La lógica de display invierte el índice: itemIndex = total - 1 - (scrollIndex + row)
-                // Queremos que firstUnreadIdx aparezca en row=0, entonces:
-                // firstUnreadIdx = total - 1 - (scrollIndex + 0)
-                // scrollIndex = total - 1 - firstUnreadIdx
-                st.scrollIndex = totalMessages - 1 - firstUnreadIdx;
-                st.sel = 0;  // Seleccionar primera fila visible (que será el primer no leído)
+            if (lastReadIdx >= 0) {
+                // Posicionar en el último mensaje leído como primera línea
+                // La lógica de display: itemIndex = total - 1 - (scrollIndex + row)
+                // Queremos que lastReadIdx aparezca en row=0, entonces:
+                // lastReadIdx = total - 1 - (scrollIndex + 0)
+                // scrollIndex = total - 1 - lastReadIdx
+                st.scrollIndex = totalMessages - 1 - lastReadIdx;
+                st.sel = 0;  // No seleccionar nada inicialmente
             } else {
-                // Si no hay mensajes no leídos, ir al más reciente
-                st.scrollIndex = 0;
+                // Si no hay mensajes leídos, ir al más antiguo
+                st.scrollIndex = totalMessages - 1;
                 st.sel = 0;
             }
             st.offset = 0;       // Reset horizontal scroll too
@@ -335,16 +335,16 @@ void resetScrollToTop(uint32_t nodeId, bool isDM) {
         const auto& chanHistory = chat::ChatHistoryStore::instance().getCHAN(ch);
         int totalMessages = (int)chanHistory.size();
         if (totalMessages > 0) {
-            // Buscar el primer mensaje no leído
-            int firstUnreadIdx = chat::ChatHistoryStore::instance().getFirstUnreadIndexCHAN(ch);
+            // Buscar el último mensaje leído para posicionarse ahí
+            int lastReadIdx = chat::ChatHistoryStore::instance().getLastReadIndexCHAN(ch);
             
-            if (firstUnreadIdx >= 0) {
-                // Posicionar en el primer mensaje no leído
-                st.scrollIndex = totalMessages - 1 - firstUnreadIdx;
-                st.sel = 0;  // Seleccionar primera fila visible (que será el primer no leído)
+            if (lastReadIdx >= 0) {
+                // Posicionar en el último mensaje leído como primera línea
+                st.scrollIndex = totalMessages - 1 - lastReadIdx;
+                st.sel = 0;  // No seleccionar nada inicialmente
             } else {
-                // Si no hay mensajes no leídos, ir al más reciente
-                st.scrollIndex = 0;
+                // Si no hay mensajes leídos, ir al más antiguo
+                st.scrollIndex = totalMessages - 1;
                 st.sel = 0;
             }
             st.offset = 0;       // Reset horizontal scroll too

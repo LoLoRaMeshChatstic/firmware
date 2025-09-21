@@ -37,6 +37,8 @@ class menuHandler
         wifi_password_prompt,
         mqtt_base_menu,
         mqtt_toggle_menu,
+        mqtt_server_config,
+        mqtt_credentials_config,
         mqtt_server_prompt,
         mqtt_username_prompt,
         mqtt_password_prompt,
@@ -93,6 +95,8 @@ class menuHandler
     static void wifiConfigMenu();
     static void mqttBaseMenu();
     static void mqttToggleMenu();
+    static void mqttServerConfig();
+    static void mqttCredentialsConfig();
     static void notificationsMenu();
     static void screenOptionsMenu();
     static void powerMenu();

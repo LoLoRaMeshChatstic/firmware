@@ -61,6 +61,8 @@ public:
   // Funciones para posicionar marquee en primer mensaje no leído
   int getFirstUnreadIndexDM(uint32_t peer) const;       // Retorna índice del primer mensaje no leído en DM (-1 si todos leídos)
   int getFirstUnreadIndexCHAN(uint8_t channel) const;   // Retorna índice del primer mensaje no leído en canal (-1 si todos leídos)
+  int getLastReadIndexDM(uint32_t peer) const;          // Retorna índice del último mensaje leído en DM (-1 si ninguno leído)  
+  int getLastReadIndexCHAN(uint8_t channel) const;      // Retorna índice del último mensaje leído en canal (-1 si ninguno leído)
 
   // Listados
   std::vector<uint32_t> listDMPeers() const;

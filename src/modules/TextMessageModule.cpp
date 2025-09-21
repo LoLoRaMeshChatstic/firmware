@@ -58,9 +58,8 @@ ProcessMessage TextMessageModule::handleReceived(const meshtastic_MeshPacket &mp
             /*outgoing=*/false,
             text,
             ts);
-        // DISABLED: Auto-scroll to newest message when new DM arrives
-        // This interferes with unread message indicators
-        // graphics::resetScrollToTop(static_cast<uint32_t>(mp.from), true);
+        // Update scroll position to stay at last read message  
+        graphics::resetScrollToTop(static_cast<uint32_t>(mp.from), true);
     } else {
         chat::ChatHistoryStore::instance().addCHAN(
             channelIndex,
@@ -68,9 +67,8 @@ ProcessMessage TextMessageModule::handleReceived(const meshtastic_MeshPacket &mp
             /*outgoing=*/false,
             text,
             ts);
-        // DISABLED: Auto-scroll to newest message when new channel message arrives
-        // This interferes with unread message indicators
-        // graphics::resetScrollToTop(static_cast<uint32_t>(channelIndex), false);
+        // Update scroll position to stay at last read message
+        graphics::resetScrollToTop(static_cast<uint32_t>(channelIndex), false);
     }
 
     return ProcessMessage::CONTINUE;
